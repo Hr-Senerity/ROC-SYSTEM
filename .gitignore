@@ -1,0 +1,77 @@
+# 依赖文件
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# 构建产物
+roc-frontend/build/
+roc-frontend/dist/
+roc-backend/build/
+roc-backend/bin/
+roc-backend/lib/
+
+# 环境变量和配置
+.env
+.env.local
+.env.*.local
+*.log
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker 相关
+docker-compose.override.yml
+.dockerignore
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 临时文件
+*.tmp
+*.temp
+*.cache
+
+# C++ 编译文件
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# 测试覆盖率
+coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# 日志文件
+logs/
+*.log
+
+# 备份文件
+*.bak
+*.backup
+*~
+
