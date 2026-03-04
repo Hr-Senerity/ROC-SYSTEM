@@ -1,0 +1,27 @@
+# ROC-SYSTEM 宿主机 Nginx 站点配置模板
+# 由 scripts/deploy-gateway.sh 渲染生成，请勿手改生成文件
+
+server {
+    listen 80;
+    server_name {{DOMAIN}};
+
+    # === 前端（两种模式二选一）===
+    # FRONTEND_MODE=local: 宿主机目录提供静态文件
+    # FRONTEND_MODE=docker: 反代到前端容器（通常在本机端口）
+
+{{FRONTEND_BLOCK}}
+
+    # === 后端 API 反代 ===
+    location /api/ {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass {{API_UPSTREAM}};
+    }
+}
+
+# TLS 说明：
+# - 当前模板先生成 80 端口版本；如果 TLS_MODE=manual，deploy-gateway.sh 会生成额外的 443 server 块
+

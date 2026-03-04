@@ -17,6 +17,10 @@ roc-backend/lib/
 .env.*.local
 *.log
 
+# 部署配置（不提交真实环境）
+scripts/config/deploy.env
+scripts/config/secrets.env
+
 # IDE 配置
 .vscode/
 .idea/

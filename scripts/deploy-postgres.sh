@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# PostgreSQL 本地部署脚本
+# PostgreSQL 本地部署脚本（模块化：从 scripts/config 读取配置）
 # 使用方法: ./scripts/deploy-postgres.sh [选项]
 # 选项:
 #   -i, --install    安装 PostgreSQL
@@ -8,111 +8,146 @@
 #   -t, --stop       停止 PostgreSQL 服务
 #   -r, --restart    重启 PostgreSQL 服务
 #   -c, --create     创建数据库和用户
+#   --apply          执行 postgres/init/init.sql（扩展/时区等）
+#   -a, --all        install -> start -> create -> apply
 #   -h, --help       显示帮助信息
 
 set -e
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/common.sh"
+load_env
 
-# 配置变量
-DB_NAME="roc_db"
-DB_USER="roc_user"
-DB_PASSWORD="roc_password"
-DB_PORT="5432"
-
-# 打印带颜色的消息
-print_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-print_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+load_pg_local_cfg() {
+  DB_NAME_VAL="${DB_NAME:-roc_db}"
+  DB_USER_VAL="${DB_USER:-roc_user}"
+  DB_PASSWORD_VAL="${DB_PASSWORD:-}"
+  DB_PORT_VAL="${DB_PORT:-5432}"
+  INIT_SQL="${REPO_ROOT}/postgres/init/init.sql"
 }
 
 # 检查 PostgreSQL 是否安装
 check_postgres() {
     if ! command -v psql &> /dev/null; then
-        print_error "PostgreSQL 未安装"
+        log_error "PostgreSQL 未安装"
         return 1
     fi
-    print_info "PostgreSQL 检查通过"
+    log_info "PostgreSQL 检查通过"
     return 0
 }
 
 # 安装 PostgreSQL (Linux)
 install_postgres() {
-    print_info "安装 PostgreSQL..."
+    log_info "安装 PostgreSQL..."
     
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         if command -v apt-get &> /dev/null; then
             sudo apt-get update
             sudo apt-get install -y postgresql postgresql-contrib
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y postgresql-server postgresql-contrib
         elif command -v yum &> /dev/null; then
             sudo yum install -y postgresql-server postgresql-contrib
         else
-            print_error "不支持的 Linux 发行版"
+            log_error "不支持的 Linux 发行版"
             exit 1
         fi
     else
-        print_error "此脚本仅支持 Linux 系统"
+        log_error "此脚本仅支持 Linux 系统"
         exit 1
     fi
     
-    print_info "PostgreSQL 安装完成"
+    log_info "PostgreSQL 安装完成"
+}
+
+detect_pg_service() {
+  # 尽量兼容不同发行版的服务名
+  if systemctl list-unit-files | grep -q '^postgresql\.service'; then
+    echo "postgresql"
+    return
+  fi
+  local svc
+  svc="$(systemctl list-unit-files | awk '{print $1}' | grep -E '^postgresql(-[0-9]+)?\.service$' | head -n 1 | sed 's/\.service$//')"
+  if [[ -n "$svc" ]]; then
+    echo "$svc"
+    return
+  fi
+  echo "postgresql"
 }
 
 # 启动 PostgreSQL 服务
 start_postgres() {
-    print_info "启动 PostgreSQL 服务..."
+    log_info "启动 PostgreSQL 服务..."
     
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        sudo systemctl start postgresql
-        sudo systemctl enable postgresql
+        local svc
+        svc="$(detect_pg_service)"
+        sudo systemctl start "$svc"
+        sudo systemctl enable "$svc"
     else
-        print_error "此脚本仅支持 Linux 系统"
+        log_error "此脚本仅支持 Linux 系统"
         exit 1
     fi
     
-    print_info "PostgreSQL 服务已启动"
+    log_info "PostgreSQL 服务已启动"
 }
 
 # 停止 PostgreSQL 服务
 stop_postgres() {
-    print_info "停止 PostgreSQL 服务..."
+    log_info "停止 PostgreSQL 服务..."
     
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        sudo systemctl stop postgresql
+        local svc
+        svc="$(detect_pg_service)"
+        sudo systemctl stop "$svc"
     else
-        print_error "此脚本仅支持 Linux 系统"
+        log_error "此脚本仅支持 Linux 系统"
         exit 1
     fi
     
-    print_info "PostgreSQL 服务已停止"
+    log_info "PostgreSQL 服务已停止"
 }
 
 # 创建数据库和用户
 create_database() {
-    print_info "创建数据库和用户..."
+    load_pg_local_cfg
+    require_vars DB_NAME DB_USER
+    if [[ -z "${DB_PASSWORD_VAL}" ]]; then
+      log_warn "DB_PASSWORD 未设置（建议放在 scripts/config/secrets.env）"
+      DB_PASSWORD_VAL="roc_password"
+    fi
+
+    log_info "创建数据库和用户..."
     
     sudo -u postgres psql <<EOF
-CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';
-CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER_VAL}') THEN
+    CREATE ROLE ${DB_USER_VAL} LOGIN PASSWORD '${DB_PASSWORD_VAL}';
+  END IF;
+END
+\$\$;
+CREATE DATABASE ${DB_NAME_VAL} OWNER ${DB_USER_VAL};
+GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME_VAL} TO ${DB_USER_VAL};
 \q
 EOF
     
-    print_info "数据库和用户创建完成"
-    print_info "数据库名: ${DB_NAME}"
-    print_info "用户名: ${DB_USER}"
-    print_info "端口: ${DB_PORT}"
+    log_info "数据库和用户创建完成"
+    log_info "数据库名: ${DB_NAME_VAL}"
+    log_info "用户名: ${DB_USER_VAL}"
+    log_info "端口: ${DB_PORT_VAL}"
+}
+
+apply_init_sql() {
+  load_pg_local_cfg
+  if [[ ! -f "${INIT_SQL}" ]]; then
+    log_error "未找到初始化 SQL：${INIT_SQL}"
+    exit 1
+  fi
+  log_info "执行初始化 SQL：${INIT_SQL}"
+  sudo -u postgres psql -d "${DB_NAME_VAL}" -f "${INIT_SQL}"
+  log_info "初始化 SQL 执行完成"
 }
 
 # 显示帮助信息
@@ -122,12 +157,17 @@ show_help() {
     echo "使用方法:"
     echo "  $0 [选项]"
     echo ""
+    echo "配置文件:"
+    echo "  scripts/config/deploy.env (+ 可选 scripts/config/secrets.env)"
+    echo ""
     echo "选项:"
     echo "  -i, --install    安装 PostgreSQL"
     echo "  -s, --start      启动 PostgreSQL 服务"
     echo "  -t, --stop       停止 PostgreSQL 服务"
     echo "  -r, --restart    重启 PostgreSQL 服务"
     echo "  -c, --create     创建数据库和用户"
+    echo "  --apply          执行 postgres/init/init.sql"
+    echo "  -a, --all        install -> start -> create -> apply"
     echo "  -h, --help       显示帮助信息"
 }
 
@@ -152,11 +192,23 @@ main() {
             check_postgres || exit 1
             create_database
             ;;
+        --apply)
+            check_postgres || exit 1
+            apply_init_sql
+            ;;
+        -a|--all)
+            if ! check_postgres; then
+              install_postgres
+            fi
+            start_postgres
+            create_database
+            apply_init_sql
+            ;;
         -h|--help|"")
             show_help
             ;;
         *)
-            print_error "未知选项: $1"
+            log_error "未知选项: $1"
             show_help
             exit 1
             ;;
