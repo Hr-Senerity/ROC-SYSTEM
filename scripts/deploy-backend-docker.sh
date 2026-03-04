@@ -69,6 +69,10 @@ run_container() {
     log_warn "DB_PASSWORD 未设置（建议放在 scripts/config/secrets.env）"
   fi
 
+  # 后端监听（容器内）
+  local listen_host="${BACKEND_LISTEN_HOST:-0.0.0.0}"
+  local listen_port="${BACKEND_LISTEN_PORT:-$CONTAINER_PORT}"
+
   # 如果镜像不存在且你没 build，则提示
   if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${IMAGE_NAME}:latest$"; then
     log_warn "镜像不存在：${IMAGE_NAME}:latest"
@@ -81,6 +85,8 @@ run_container() {
   docker run -d \
     --name "${CONTAINER_NAME}" \
     -p "${HOST_PORT}:${CONTAINER_PORT}" \
+    -e "BACKEND_LISTEN_HOST=${listen_host}" \
+    -e "BACKEND_LISTEN_PORT=${listen_port}" \
     -e "DB_HOST=${DB_HOST_VAL}" \
     -e "DB_PORT=${DB_PORT_VAL}" \
     -e "DB_NAME=${DB_NAME_VAL}" \
