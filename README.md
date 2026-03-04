@@ -42,15 +42,19 @@ ROC-SYSTEM/
 │   │   ├── components/      # React 组件
 │   │   └── ...
 │   └── ...
-├── scripts/                 # 部署脚本
-│   ├── deploy-frontend.sh
-│   ├── deploy-frontend-docker.sh
-│   ├── deploy-backend.sh
-│   ├── deploy-backend-docker.sh
-│   ├── deploy-postgres.sh
-│   ├── deploy-postgres-docker.sh
-│   ├── deploy-all.sh
-│   └── deploy-all-docker.sh
+├── scripts/                 # 部署脚本与配置
+│   ├── config/              # 部署配置单（deploy.env / secrets.env）
+│   ├── lib/                 # 公共脚本库（common.sh）
+│   ├── templates/           # Nginx 等模板文件
+│   ├── deploy-frontend.sh               # 前端本地部署
+│   ├── deploy-frontend-docker.sh        # 前端 Docker 部署
+│   ├── deploy-backend.sh                # 后端本地部署（占位，待完善）
+│   ├── deploy-backend-docker.sh         # 后端 Docker 部署
+│   ├── deploy-postgres.sh               # PostgreSQL 本地部署
+│   ├── deploy-postgres-docker.sh        # PostgreSQL Docker 部署
+│   ├── deploy-gateway.sh                # 宿主机 Nginx 网关部署
+│   ├── deploy-all.sh                    # 预留：整体本地部署
+│   └── deploy-all-docker.sh             # 预留：整体 Docker 部署
 └── README.md                # 本文件
 ```
 
@@ -128,9 +132,10 @@ docker-compose up -d
 - Shadcn/ui
 
 ### 后端
-- C++ (待实现)
-- PostgreSQL
-- 协议支持：ROS、ROC、JSON
+- C++ / Drogon（HTTP 框架）
+- PostgreSQL / libpqxx
+- 初始后端 API：`/api/health`、`/api/db/ping`（用于服务与数据库连通性检查）
+- 协议支持：ROS、ROC、JSON（协议层规划中）
 
 ### 部署
 - Docker

@@ -18,6 +18,10 @@
 - Docker 部署配置
 - PostgreSQL 数据库配置
 - Git 仓库初始化
+- 统一 scripts/config 配置单与 scripts/lib/common.sh 公共工具库
+- 前端 / 后端 / 数据库 三模块的本地与 Docker 部署脚本（deploy-frontend* / deploy-backend* / deploy-postgres*）
+- 宿主机 Nginx 网关脚本与模板（deploy-gateway.sh + nginx-site.conf.template），统一管理域名与反向代理
+- 初始 C++ 后端服务（Drogon），提供 /api/health 与 /api/db/ping，并可通过环境变量连接 PostgreSQL（libpqxx）
 
 ==========
 [1.0.0] - 2024-12-26
@@ -50,9 +54,8 @@
 
 计划中
 -------
-- C++ 后端实现
-- 数据库表结构设计
-- RESTful API 接口
+- C++ 后端业务实现与完整 RESTful API 接口
+- 数据库表结构设计与迁移体系
 - 协议桥接器实现（ROS、ROC、JSON）
 - WebSocket 实时通信
 - 用户权限管理
