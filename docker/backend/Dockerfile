@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmariadb-dev \
     libbrotli-dev \
     libc-ares-dev \
+    libhiredis-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # 第三步：安装 Drogon 和 libpqxx（现在所有依赖都已就绪）
@@ -61,6 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
     libmariadb3 \
     libbrotli1 \
+    libhiredis0.14 \
     # Drogon 和 libpqxx 运行时库
     libdrogon-dev \
     libpqxx-dev \
