@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libdrogon-dev \
     libpqxx-dev \
+    libjsoncpp-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -30,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libdrogon-dev \
     libpqxx-dev \
+    libjsoncpp-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
