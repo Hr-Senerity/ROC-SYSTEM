@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g-dev \
     libssl-dev \
     libpq-dev \
+    libsqlite3-dev \
     libdrogon-dev \
     libpqxx-dev \
     libjsoncpp-dev \
@@ -37,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     libssl3 \
     libpq5 \
+    libsqlite3-0 \
     libdrogon-dev \
     libpqxx-dev \
     libjsoncpp-dev \
