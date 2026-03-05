@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     pkg-config \
     git \
+    uuid-dev \
     libdrogon-dev \
     libpqxx-dev \
     libjsoncpp-dev \
@@ -29,6 +30,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    uuid-dev \
     libdrogon-dev \
     libpqxx-dev \
     libjsoncpp-dev \
