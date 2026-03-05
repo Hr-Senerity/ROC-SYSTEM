@@ -36,6 +36,10 @@
   - SQLite3 开发库 / 运行时库
   - 用途：Drogon 框架要求（即使不使用 SQLite3，CMake 配置阶段也会查找）
 
+- **libmariadb-dev** / **libmariadb3** (runtime)
+  - MariaDB/MySQL 开发库 / 运行时库
+  - 用途：Drogon 框架要求（即使不使用 MySQL/MariaDB，CMake 配置阶段也会查找）
+
 ## Drogon 包
 
 - **libdrogon-dev** / **libdrogon-dev** (runtime)
@@ -82,10 +86,10 @@
 
 ```bash
 # 检查开发库
-dpkg -l | grep -E "libjsoncpp-dev|uuid-dev|zlib1g-dev|libssl-dev|libpq-dev|libsqlite3-dev|libpqxx-dev|libdrogon-dev"
+dpkg -l | grep -E "libjsoncpp-dev|uuid-dev|zlib1g-dev|libssl-dev|libpq-dev|libsqlite3-dev|libmariadb-dev|libpqxx-dev|libdrogon-dev"
 
 # 检查运行时库
-dpkg -l | grep -E "libjsoncpp|uuid|zlib1g|libssl3|libpq5|libsqlite3|libpqxx|libdrogon"
+dpkg -l | grep -E "libjsoncpp|uuid|zlib1g|libssl3|libpq5|libsqlite3|libmariadb3|libpqxx|libdrogon"
 ```
 
 ## 安装命令
@@ -99,6 +103,7 @@ sudo apt-get install -y \
     libssl-dev \
     libpq-dev \
     libsqlite3-dev \
+    libmariadb-dev \
     libpqxx-dev \
     libdrogon-dev \
     build-essential \
