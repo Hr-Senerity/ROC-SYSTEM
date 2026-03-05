@@ -4,21 +4,35 @@ FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 第一步：安装基础构建工具
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     build-essential \
     cmake \
     pkg-config \
     git \
+ && rm -rf /var/lib/apt/lists/*
+
+# 第二步：在安装 Drogon 之前，先自动安装所有 Drogon 需要的依赖
+# 这样可以避免 Drogon 的 CMake 配置时因为缺少依赖而失败
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Drogon 必需依赖
+    libjsoncpp-dev \
     uuid-dev \
     zlib1g-dev \
+    # Drogon 推荐依赖（CMake 配置时会查找）
     libssl-dev \
     libpq-dev \
     libsqlite3-dev \
     libmariadb-dev \
+    libbrotli-dev \
+    libc-ares-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# 第三步：安装 Drogon 和 libpqxx（现在所有依赖都已就绪）
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libdrogon-dev \
     libpqxx-dev \
-    libjsoncpp-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -33,17 +47,22 @@ FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Runtime 阶段：安装所有运行时依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    # Drogon 运行时依赖
     uuid-dev \
     zlib1g \
     libssl3 \
+    libjsoncpp-dev \
+    # 数据库运行时库
     libpq5 \
     libsqlite3-0 \
     libmariadb3 \
+    libbrotli1 \
+    # Drogon 和 libpqxx 运行时库
     libdrogon-dev \
     libpqxx-dev \
-    libjsoncpp-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
