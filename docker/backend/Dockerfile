@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     git \
     uuid-dev \
+    zlib1g-dev \
+    libssl-dev \
+    libpq-dev \
     libdrogon-dev \
     libpqxx-dev \
     libjsoncpp-dev \
@@ -31,6 +34,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     uuid-dev \
+    zlib1g \
+    libssl3 \
+    libpq5 \
     libdrogon-dev \
     libpqxx-dev \
     libjsoncpp-dev \
