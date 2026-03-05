@@ -7,6 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # 第一步：安装基础构建工具
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    apt-utils \
     build-essential \
     cmake \
     pkg-config \
