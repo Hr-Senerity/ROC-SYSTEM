@@ -6,8 +6,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Drogon + libpqxx
-find_package(Drogon REQUIRED)
-find_package(PQXX REQUIRED)
+find_package(Drogon CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PQXX REQUIRED IMPORTED_TARGET libpqxx)
 
 add_executable(roc-backend-server
   src/main.cpp
@@ -18,5 +19,4 @@ add_executable(roc-backend-server
 )
 
 target_include_directories(roc-backend-server PRIVATE src)
-target_link_libraries(roc-backend-server PRIVATE Drogon::Drogon pqxx)
-
+target_link_libraries(roc-backend-server PRIVATE Drogon::Drogon PkgConfig::PQXX)

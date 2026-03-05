@@ -15,7 +15,7 @@ void PostgresClient::ping() const {
   pqxx::work w(c);
   auto r = w.exec("SELECT 1");
   w.commit();
-  if (r.empty() || r[0].empty()) {
+  if (r.size() != 1 || r[0].size() != 1 || r[0][0].is_null() || r[0][0].as<int>() != 1) {
     throw std::runtime_error("Unexpected ping result");
   }
 }
