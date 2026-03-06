@@ -144,6 +144,12 @@ install_site_conf() {
     if [[ ! -L "${enabled_dir}/${site_name}" ]]; then
       sudo ln -s "${dest}" "${enabled_dir}/${site_name}"
     fi
+    
+    # 禁用默认站点（如果存在），避免优先级冲突
+    if [[ -L "${enabled_dir}/default" ]]; then
+      log_info "禁用默认站点: ${enabled_dir}/default"
+      sudo rm -f "${enabled_dir}/default"
+    fi
   fi
 
   rm -f "$tmp"
