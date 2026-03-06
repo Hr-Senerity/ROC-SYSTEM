@@ -21,7 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 load_env
 
-TEMPLATE_FILE="${SCRIPT_DIR}/templates/nginx-site.conf.template"
+# 注意：common.sh 会重新定义 SCRIPT_DIR，所以使用 SCRIPTS_DIR（指向 scripts 目录）
+TEMPLATE_FILE="${SCRIPTS_DIR}/templates/nginx-site.conf.template"
 
 detect_nginx_layout() {
   if [[ -d "/etc/nginx/sites-available" && -d "/etc/nginx/sites-enabled" ]]; then
