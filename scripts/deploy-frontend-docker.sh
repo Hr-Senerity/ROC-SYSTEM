@@ -156,16 +156,16 @@ main() {
             delete_all
             ;;
         -a|--all)
-            print_info "开始完整部署流程..."
+            log_info "开始完整部署流程..."
             build_image
             run_container
-            print_info "部署完成！"
+            log_info "部署完成！"
             ;;
         -h|--help|"")
             show_help
             ;;
         *)
-            print_error "未知选项: $1"
+            log_error "未知选项: $1"
             show_help
             exit 1
             ;;
