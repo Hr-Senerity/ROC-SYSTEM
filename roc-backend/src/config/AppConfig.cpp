@@ -31,15 +31,18 @@ AppConfig loadFromEnv() {
   cfg.http.listenHost = getenvOr("BACKEND_LISTEN_HOST", cfg.http.listenHost);
   cfg.http.listenPort = getenvIntOr("BACKEND_LISTEN_PORT", cfg.http.listenPort);
 
-  // DB (align with scripts: deploy-backend-docker.sh)
+  // DB
   cfg.db.host = getenvOr("DB_HOST", cfg.db.host);
   cfg.db.port = getenvIntOr("DB_PORT", cfg.db.port);
   cfg.db.name = getenvOr("DB_NAME", cfg.db.name);
   cfg.db.user = getenvOr("DB_USER", cfg.db.user);
   cfg.db.password = getenvOr("DB_PASSWORD", cfg.db.password);
 
+  // Auth
+  cfg.auth.jwtSecret = getenvOr("JWT_SECRET", cfg.auth.jwtSecret);
+  cfg.auth.tokenExpireSeconds = getenvIntOr("JWT_EXPIRE_SECONDS", cfg.auth.tokenExpireSeconds);
+
   return cfg;
 }
 
 }  // namespace roc::config
-

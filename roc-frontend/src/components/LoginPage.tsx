@@ -1,32 +1,41 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
-import { Lock, Mail, ArrowLeft, Zap } from 'lucide-react';
+import { Lock, User, ArrowLeft, Zap } from 'lucide-react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!email || !password) {
+    if (!username || !password) {
       setError('请填写所有字段');
       return;
     }
 
-    login(email, password);
-    navigate('/');
+    setLoading(true);
+    const result = await login(username, password);
+    setLoading(false);
+
+    if (result.ok) {
+      navigate('/projects');
+    } else {
+      setError(result.message || '登录失败');
+    }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        {/* 返回按钮 */}
         <button
           onClick={() => navigate('/')}
           className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-8 transition-colors"
@@ -35,9 +44,7 @@ export function LoginPage() {
           返回首页
         </button>
 
-        {/* 登录卡片 */}
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          {/* Logo */}
           <div className="flex items-center justify-center gap-2 mb-8">
             <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
               <Zap className="w-7 h-7 text-white" />
@@ -56,15 +63,16 @@ export function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-slate-700 mb-2">邮箱</label>
+              <label className="block text-slate-700 mb-2">用户名</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="your@email.com"
+                  placeholder="请输入用户名"
+                  autoFocus
                 />
               </div>
             </div>
@@ -93,12 +101,13 @@ export function LoginPage() {
               </a>
             </div>
 
-            <button
+            <Button
               type="submit"
-              className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition-all transform hover:scale-[1.02]"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
             >
-              登录
-            </button>
+              {loading ? '登录中...' : '登录'}
+            </Button>
           </form>
 
           <div className="mt-6 text-center">

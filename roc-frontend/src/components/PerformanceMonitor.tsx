@@ -1,24 +1,6 @@
 import { useState } from 'react';
 import { Plus, Trash2, Activity, Circle, ChevronDown, ChevronUp, Server } from 'lucide-react';
-
-interface Robot {
-  id: string;
-  name: string;
-  ip: string;
-  status: 'online' | 'offline' | 'error';
-  cpu: number;
-  memory: number;
-  battery: number;
-  localizationConfidence: number; // 定位置信度
-  logs: LogEntry[];
-}
-
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  level: 'info' | 'warning' | 'error';
-  message: string;
-}
+import type { Robot, LogEntry } from '../types/robot';
 
 interface PerformanceMonitorProps {
   projectId: string;
@@ -35,6 +17,9 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       memory: 62,
       battery: 85,
       localizationConfidence: 95,
+      position: { x: 25, y: 35, theta: 0.78 },
+      velocity: { linear: 1.2, angular: 0.05 },
+      deliveryPath: [],
       logs: [
         { id: '1', timestamp: '2024-12-26 10:30:15', level: 'info', message: '任务开始执行' },
         { id: '2', timestamp: '2024-12-26 10:31:20', level: 'info', message: '导航路径规划完成' },
@@ -50,6 +35,9 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       memory: 58,
       battery: 92,
       localizationConfidence: 88,
+      position: { x: 70, y: 60, theta: 2.35 },
+      velocity: { linear: 0.8, angular: -0.1 },
+      deliveryPath: [],
       logs: [
         { id: '1', timestamp: '2024-12-26 10:25:10', level: 'info', message: '系统启动成功' },
         { id: '2', timestamp: '2024-12-26 10:26:30', level: 'info', message: '接收到新任务' },
@@ -64,6 +52,9 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       memory: 85,
       battery: 15,
       localizationConfidence: 45,
+      position: { x: 40, y: 85, theta: 1.57 },
+      velocity: { linear: 0, angular: 0 },
+      deliveryPath: [],
       logs: [
         { id: '1', timestamp: '2024-12-26 10:20:00', level: 'error', message: '电池电量过低' },
         { id: '2', timestamp: '2024-12-26 10:21:15', level: 'error', message: '传感器异常' },
@@ -99,6 +90,9 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       memory: 0,
       battery: 100,
       localizationConfidence: 0,
+      position: { x: 0, y: 0, theta: 0 },
+      velocity: { linear: 0, angular: 0 },
+      deliveryPath: [],
       logs: [
         {
           id: '1',

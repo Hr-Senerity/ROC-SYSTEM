@@ -1,10 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
-import { Menu, LogOut, Zap, BarChart3, Settings, Users, User, ChevronDown, Briefcase } from 'lucide-react';
+import { Menu, LogOut, Zap, BarChart3, Settings, Users, User, ChevronDown, Briefcase, Shield } from 'lucide-react';
 import { useState } from 'react';
 
 export function HomePage() {
-  const { isLoggedIn, logout } = useAuth();
+  const { isLoggedIn, logout, role } = useAuth();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -114,6 +114,18 @@ export function HomePage() {
                             <Settings className="w-4 h-4" />
                             账户设置
                           </button>
+                          {role === 'super_admin' && (
+                            <button
+                              onClick={() => {
+                                setUserMenuOpen(false);
+                                navigate('/admin/users');
+                              }}
+                              className="w-full px-4 py-2 text-left text-purple-600 hover:bg-purple-50 flex items-center gap-2"
+                            >
+                              <Shield className="w-4 h-4" />
+                              用户管理
+                            </button>
+                          )}
                           <div className="border-t border-slate-200 my-2" />
                           <button
                             onClick={() => {

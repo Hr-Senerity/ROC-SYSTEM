@@ -2,6 +2,15 @@
 
 #include "config/AppConfig.h"
 #include "db/PostgresClient.h"
+#include "controllers/AuthController.h"
+#include "controllers/AdminController.h"
+#include "controllers/ProjectController.h"
+#include "controllers/VehicleController.h"
+#include "controllers/StatusWsController.h"
+#include "protocols/ProtocolBridge.h"
+
+// Forward declaration from protocols/roc/roc_bridge.cpp
+void registerProtocolBridge(std::shared_ptr<roc::protocol::ProtocolBridge> bridge);
 
 static drogon::HttpResponsePtr jsonResp(const Json::Value &v, int code = 200) {
   auto resp = drogon::HttpResponse::newHttpJsonResponse(v);
@@ -20,7 +29,15 @@ int main() {
     return 1;
   }
 
-  // Routes
+  // Store JWT secret in app config for middleware access
+  Json::Value customCfg;
+  customCfg["jwt_secret"] = cfg.auth.jwtSecret;
+  app().setCustomConfig(customCfg);
+
+  const auto connStr = roc::db::makeConnStr(
+      cfg.db.host, cfg.db.port, cfg.db.name, cfg.db.user, cfg.db.password);
+
+  // Health check
   app().registerHandler(
       "/api/health",
       [](const HttpRequestPtr &, std::function<void(const HttpResponsePtr &)> &&cb) {
@@ -29,15 +46,15 @@ int main() {
         v["service"] = "roc-backend";
         cb(jsonResp(v));
       },
-      {Get});
+      {Get, Options});
 
+  // DB ping
   app().registerHandler(
       "/api/db/ping",
-      [cfg](const HttpRequestPtr &, std::function<void(const HttpResponsePtr &)> &&cb) {
+      [connStr](const HttpRequestPtr &, std::function<void(const HttpResponsePtr &)> &&cb) {
         Json::Value v;
         v["ok"] = false;
         try {
-          const auto connStr = roc::db::makeConnStr(cfg.db.host, cfg.db.port, cfg.db.name, cfg.db.user, cfg.db.password);
           roc::db::PostgresClient pg(connStr);
           pg.ping();
           v["ok"] = true;
@@ -47,7 +64,49 @@ int main() {
           cb(jsonResp(v, 500));
         }
       },
-      {Get});
+      {Get, Options});
+
+  // Register auth routes
+  roc::controller::registerAuthRoutes(cfg, connStr);
+
+  // Register admin routes
+  roc::controller::registerAdminRoutes(cfg, connStr);
+
+  // Register business routes
+  roc::controller::registerProjectRoutes(cfg, connStr);
+  roc::controller::registerVehicleRoutes(cfg, connStr);
+
+  // Initialize protocol bridge with WebSocket broadcast
+  auto bridge = std::make_shared<roc::protocol::ProtocolBridge>();
+  bridge->onStatusReport([](const roc::protocol::RobotStatus &s) {
+    LOG_INFO << "Robot status: " << s.robot_id
+             << " online=" << s.online
+             << " battery=" << s.battery_level
+             << " pos=(" << s.position_x << "," << s.position_y << ")";
+
+    // Broadcast to WebSocket clients
+    Json::Value msg;
+    msg["type"] = "status_update";
+    msg["robot_id"] = s.robot_id;
+    msg["online"] = s.online;
+    msg["cpu"] = s.cpu_usage;
+    msg["memory"] = s.memory_usage;
+    msg["battery"] = s.battery_level;
+    msg["localization_confidence"] = s.localization_confidence;
+    msg["position_x"] = s.position_x;
+    msg["position_y"] = s.position_y;
+    msg["position_theta"] = s.position_theta;
+    msg["velocity_linear"] = s.velocity_linear;
+    msg["velocity_angular"] = s.velocity_angular;
+
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "";
+    roc::ws::StatusWsController::broadcast(Json::writeString(w, msg));
+  });
+  bridge->onControlCommand([](const roc::protocol::ControlCommand &c) {
+    LOG_INFO << "Control command: " << c.robot_id << " type=" << c.command_type;
+  });
+  registerProtocolBridge(bridge);
 
   LOG_INFO << "Starting roc-backend on " << cfg.http.listenHost << ":" << cfg.http.listenPort;
   LOG_INFO << "DB target " << cfg.db.host << ":" << cfg.db.port << "/" << cfg.db.name;
@@ -56,4 +115,3 @@ int main() {
   app().run();
   return 0;
 }
-

@@ -92,6 +92,8 @@ run_container() {
     -e "DB_NAME=${DB_NAME_VAL}" \
     -e "DB_USER=${DB_USER_VAL}" \
     -e "DB_PASSWORD=${DB_PASSWORD_VAL}" \
+    -e "JWT_SECRET=${JWT_SECRET:-roc-system-default-secret-change-in-production}" \
+    -e "JWT_EXPIRE_SECONDS=${JWT_EXPIRE_SECONDS:-86400}" \
     --restart unless-stopped \
     "${IMAGE_NAME}:latest"
 

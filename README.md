@@ -2,161 +2,158 @@
 
 机器人运营控制平台 (Robot Operation Control Platform)
 
-## 📋 项目简介
+## 项目简介
 
-ROC-SYSTEM 是一个现代化的机器人运营控制平台，提供完整的项目管理、地图管理、路径规划和性能监控功能。支持多种通信协议（ROS、ROC、JSON），可灵活对接各类机器人系统。
+ROC-SYSTEM 是一个现代化的机器人运营控制平台，提供完整的用户管理、项目管理、地图可视化和实时性能监控功能。支持 JSON 和 ROC 二进制通信协议，可灵活对接各类机器人系统。
 
-## ✨ 核心功能
+## 核心功能
 
-- **用户认证系统** - 登录、注册、个人中心管理
-- **项目管理** - 创建、删除、查看项目详情
-- **地图管理** - 地图列表展示、激活状态管理
-- **路径管理** - 路径可视化、路径创建和编辑
-- **性能监控** - 机器人状态监控、CPU/内存/电量显示、定位置信度指标
-- **协议支持** - ROS、ROC、JSON 多种通信协议
+- **用户认证系统** — JWT 登录/注册，角色权限分离（super_admin / regular）
+- **超级管理员面板** — 用户管理（查看/停用/删除/统计）
+- **项目管理** — 创建、删除、查看项目详情
+- **地图可视化** — 放大查看、路网叠加、车辆实时位置标记
+- **实时监控** — WebSocket 实时推送车辆状态（位置/速度/电量/CPU/内存）
+- **车辆悬浮窗** — 点击车辆显示完整信息（IP/位置/速度/电量/CPU/内存/定位）
+- **配送路径高亮** — 选中车辆时高亮配送路径（含方向箭头和节点）
+- **协议支持** — JSON、ROC 二进制协议，可通过 HTTP 或 WebSocket 上报
 
-## 🏗️ 项目结构
+## 项目结构
 
 ```
 ROC-SYSTEM/
-├── docker/                  # Docker 部署文件
-│   ├── backend/             # 后端 Docker 部署
-│   ├── compose/             # 整体部署配置
-│   ├── frontend/            # 前端 Docker 部署
-│   └── postgres/            # PostgreSQL Docker 部署
-├── postgres/                # PostgreSQL 数据库相关
-│   └── init/                # 初始化脚本
-├── roc-backend/             # C++ 后端代码
-│   ├── config/              # 配置文件
-│   ├── src/                 # 源代码
-│   │   ├── controllers/     # 控制器
-│   │   ├── middleware/      # 中间件
-│   │   ├── models/          # 数据模型
-│   │   ├── protocols/       # 协议层
-│   │   ├── routes/          # 路由
-│   │   ├── services/        # 业务逻辑
-│   │   └── utils/           # 工具函数
-│   └── tests/               # 测试
-├── roc-frontend/            # React 前端代码
-│   ├── src/
-│   │   ├── components/      # React 组件
-│   │   └── ...
-│   └── ...
-├── scripts/                 # 部署脚本与配置
-│   ├── config/              # 部署配置单（deploy.env / secrets.env）
-│   ├── lib/                 # 公共脚本库（common.sh）
-│   ├── templates/           # Nginx 等模板文件
-│   ├── deploy-frontend.sh               # 前端本地部署
-│   ├── deploy-frontend-docker.sh        # 前端 Docker 部署
-│   ├── deploy-backend.sh                # 后端本地部署（占位，待完善）
-│   ├── deploy-backend-docker.sh         # 后端 Docker 部署
-│   ├── deploy-postgres.sh               # PostgreSQL 本地部署
-│   ├── deploy-postgres-docker.sh        # PostgreSQL Docker 部署
-│   ├── deploy-gateway.sh                # 宿主机 Nginx 网关部署
-│   ├── deploy-all.sh                    # 预留：整体本地部署
-│   └── deploy-all-docker.sh             # 预留：整体 Docker 部署
-└── README.md                # 本文件
+├── docker/
+│   ├── backend/Dockerfile
+│   ├── frontend/Dockerfile + nginx.conf
+│   ├── postgres/Dockerfile
+│   └── compose/docker-compose.yml    # 一键部署
+├── postgres/init/init.sql             # 完整数据库 Schema
+├── roc-backend/                       # C++ Drogon 后端
+│   └── src/
+│       ├── config/                    # 环境变量配置 (含 JWT)
+│       ├── controllers/               # 6 个控制器 (Auth/Admin/Project/Vehicle/StatusWs)
+│       ├── db/                        # PostgreSQL 客户端 (libpqxx)
+│       ├── middleware/                # AuthFilter + SuperAdminFilter
+│       ├── models/                    # User 模型
+│       ├── protocols/                 # JSON/ROC 序列化器 + 协议桥接器
+│       └── utils/                     # JWT (HS256) + 密码哈希 (SHA-256)
+├── roc-frontend/                      # React + TypeScript + Vite
+│   └── src/
+│       ├── components/                # 13 个页面组件 + 49 shadcn/ui 组件
+│       └── types/                     # Robot 共享类型定义
+└── scripts/                           # 11 个部署脚本 + 公共库 + 配置模板
 ```
 
-## 🚀 快速开始
+## 快速开始
 
 ### 环境要求
 
 - Node.js 18+
 - PostgreSQL 16+
-- Docker (可选)
-- C++ 编译器 (GCC/Clang)
+- Docker & Docker Compose
+- C++ 编译器 (GCC/Clang) + CMake 3.16+
+
+### Docker Compose 一键部署
+
+```bash
+# 1. 配置环境变量
+cp docker/compose/.env.example docker/compose/.env
+# 编辑 docker/compose/.env 修改密码等配置
+
+# 2. 启动所有服务
+bash scripts/deploy-all-docker.sh --up
+
+# 3. 访问
+# 前端: http://localhost:3000
+# 后端: http://localhost:8080
+# 默认管理员: admin / [REDACTED_DEFAULT_PASSWORD]
+```
 
 ### 前端开发
 
 ```bash
 cd roc-frontend
 npm install
-npm run dev
+npm run dev        # http://localhost:3000
 ```
-
-前端服务将在 http://localhost:3000 启动
 
 ### 后端开发
 
 ```bash
 cd roc-backend
-# 使用 CMake 构建
 mkdir build && cd build
-cmake ..
-make
+cmake .. && make
+# 设置环境变量后启动
+BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 ./roc-backend-server
 ```
 
-### 数据库部署
-
-#### 使用 Docker
+### 数据库初始化
 
 ```bash
-# 部署 PostgreSQL
 bash scripts/deploy-postgres-docker.sh --all
 ```
 
-#### 本地部署
-
-```bash
-# 安装并启动 PostgreSQL
-bash scripts/deploy-postgres.sh --install
-bash scripts/deploy-postgres.sh --start
-bash scripts/deploy-postgres.sh --create
-```
-
-### Docker 部署
-
-#### 前端 Docker 部署
-
-```bash
-bash scripts/deploy-frontend-docker.sh --all
-```
-
-#### 整体部署
-
-```bash
-# 使用 Docker Compose 部署所有服务
-cd docker/compose
-docker-compose up -d
-```
-
-## 🔧 技术栈
+## 技术栈
 
 ### 前端
-- React 18+
-- TypeScript
-- Vite
+- React 18 + TypeScript
+- Vite 6.3.5
 - Tailwind CSS v4
+- shadcn/ui 组件库
 - React Router
-- Shadcn/ui
+- WebSocket 客户端
 
 ### 后端
-- C++ / Drogon（HTTP 框架）
+- C++17 / Drogon HTTP 框架
 - PostgreSQL / libpqxx
-- 初始后端 API：`/api/health`、`/api/db/ping`（用于服务与数据库连通性检查）
-- 协议支持：ROS、ROC、JSON（协议层规划中）
+- OpenSSL (JWT HMAC-SHA256 + SHA-256 密码哈希)
+- JSON + ROC 二进制协议
+- WebSocket (Drogon WebSocketController)
 
 ### 部署
-- Docker
-- Nginx
-- Docker Compose
+- Docker + Docker Compose
+- Nginx 网关
 
-## 📝 开发规范
+## API 端点 (20 个)
 
-- 提交信息使用清晰的描述
-- 代码遵循项目代码风格
-- 新功能需要添加测试
+| 分类 | 端点 | 方法 | 认证 |
+|---|---|---|---|
+| 健康 | `/api/health` `/api/db/ping` | GET | 公开 |
+| 认证 | `/api/auth/register\|login\|logout` | POST | 公开 |
+| 认证 | `/api/auth/me` | GET | Bearer |
+| 管理员 | `/api/admin/users` | GET | super_admin |
+| 管理员 | `/api/admin/users/{id}` | GET | super_admin |
+| 管理员 | `/api/admin/users/{id}/status` | PATCH | super_admin |
+| 管理员 | `/api/admin/users/{id}` | DELETE | super_admin |
+| 管理员 | `/api/admin/users/{id}/vehicles` | GET | super_admin |
+| 管理员 | `/api/admin/stats` | GET | super_admin |
+| 项目 | `/api/projects` | GET/POST | Bearer |
+| 项目 | `/api/projects/{id}` | GET/PATCH/DELETE | Bearer |
+| 项目 | `/api/projects/{id}/maps` | GET | 公开 |
+| 车辆 | `/api/vehicles` | GET/POST | Bearer |
+| 车辆 | `/api/vehicles/{id}` | PATCH/DELETE | Bearer |
+| 协议 | `/api/protocol/status\|command\|roc` | POST | 公开 |
+| 实时 | `/ws/status` | WebSocket | — |
 
-## 🤝 贡献
+## 部署架构
 
-欢迎提交 Issue 和 Pull Request！
+支持三种部署模式：
 
-## 📄 许可证
+- **单机部署**: `docker compose up -d` 一键启动全部服务
+- **分离部署**: 前端/后端/数据库部署在不同服务器，通过 `deploy.env` 配置 IP
+- **混合部署**: 任意服务选择 local 或 docker 模式
+
+详见 `scripts/config/deploy.env.example` 中的场景说明。
+
+## 用户角色
+
+| 功能 | regular | super_admin |
+|---|---|---|
+| 登录/注册 | ✓ | ✓ |
+| 项目管理/地图/车辆 | ✓ | ✓ |
+| 性能监控 | ✓ | ✓ |
+| 管理用户 | ✗ | ✓ |
+| 系统统计 | ✗ | ✓ |
+
+## 许可证
 
 本项目为私有项目，仅供授权用户使用。
-
-## 📞 联系方式
-
-如有问题，请通过 GitHub Issues 联系。
-

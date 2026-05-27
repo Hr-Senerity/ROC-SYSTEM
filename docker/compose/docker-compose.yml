@@ -1,0 +1,82 @@
+version: "3.9"
+
+services:
+  # ============================================================
+  # PostgreSQL 数据库
+  # ============================================================
+  postgres:
+    build:
+      context: ../postgres
+      dockerfile: Dockerfile
+    container_name: roc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-roc_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me}
+      POSTGRES_DB: ${DB_NAME:-roc_db}
+    ports:
+      - "${POSTGRES_DOCKER_HOST_PORT:-5432}:5432"
+    volumes:
+      - roc_pgdata:/var/lib/postgresql/data
+      - ../../postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-roc_user} -d ${DB_NAME:-roc_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - roc-net
+
+  # ============================================================
+  # C++ Drogon 后端服务
+  # ============================================================
+  backend:
+    build:
+      context: ../../roc-backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: roc-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BACKEND_LISTEN_HOST: "0.0.0.0"
+      BACKEND_LISTEN_PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-roc_db}
+      DB_USER: ${DB_USER:-roc_user}
+      DB_PASSWORD: ${DB_PASSWORD:-change_me}
+      JWT_SECRET: ${JWT_SECRET:-roc-system-default-secret-change-in-production}
+      JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
+    ports:
+      - "${BACKEND_DOCKER_HOST_PORT:-8080}:8080"
+    networks:
+      - roc-net
+
+  # ============================================================
+  # React 前端 (Nginx 静态服务)
+  # ============================================================
+  frontend:
+    build:
+      context: ../../roc-frontend
+      dockerfile: ../docker/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    container_name: roc-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_DOCKER_HOST_PORT:-3000}:80"
+    networks:
+      - roc-net
+
+volumes:
+  roc_pgdata:
+    name: roc_pgdata
+
+networks:
+  roc-net:
+    name: roc-net
+    driver: bridge

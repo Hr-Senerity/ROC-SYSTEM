@@ -1,30 +1,51 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../App';
+import { useAuth, API_BASE } from '../App';
 import { User, Mail, Phone, MapPin, Calendar, Edit2, Save, X, ArrowLeft, Shield, Bell, Zap } from 'lucide-react';
 
 export function ProfilePage() {
-  const { isLoggedIn, logout } = useAuth();
+  const { isLoggedIn, logout, token, username, role } = useAuth();
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState<'profile' | 'security' | 'notifications'>('profile');
+  const [loading, setLoading] = useState(true);
 
-  // 模拟用户数据
   const [userInfo, setUserInfo] = useState({
-    username: '张三',
-    email: 'zhangsan@example.com',
-    phone: '+86 138 8888 8888',
-    location: '中国 北京',
-    joinDate: '2024-01-15',
-    bio: '热爱技术，追求卓越',
+    username: username || '',
+    email: '',
+    role: role || '',
+    status: '',
+    created_at: '',
   });
 
   const [editForm, setEditForm] = useState(userInfo);
 
-  if (!isLoggedIn) {
-    navigate('/login');
-    return null;
-  }
+  useEffect(() => {
+    if (!isLoggedIn) { navigate('/login'); return; }
+    fetchProfile();
+  }, []);
+
+  const fetchProfile = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      if (data.ok && data.user) {
+        const u = data.user;
+        const info = {
+          username: u.username || '',
+          email: u.email || '',
+          role: u.role || '',
+          status: u.status || '',
+          created_at: u.created_at || '',
+        };
+        setUserInfo(info);
+        setEditForm(info);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
 
   const handleSave = () => {
     setUserInfo(editForm);

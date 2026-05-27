@@ -17,12 +17,17 @@ struct HttpConfig {
   int listenPort{8080};
 };
 
+struct AuthConfig {
+  std::string jwtSecret{"roc-system-default-secret-change-in-production"};
+  int tokenExpireSeconds{86400};  // 24 hours
+};
+
 struct AppConfig {
   HttpConfig http;
   DbConfig db;
+  AuthConfig auth;
 };
 
 AppConfig loadFromEnv();
 
 }  // namespace roc::config
-
