@@ -80,4 +80,27 @@ IProtocolSerializer *ProtocolBridge::serializer(ProtocolType proto) {
   return nullptr;
 }
 
+void ProtocolBridge::enqueueCommand(const ControlCommand &cmd, ProtocolType proto) {
+  auto *ser = serializer(proto);
+  if (!ser) return;
+  auto data = ser->serializeCommand(cmd);
+  std::string s(data.begin(), data.end());
+  std::lock_guard<std::mutex> lock(mutex_);
+  pendingCommands_[cmd.robot_id].push_back(s);
+}
+
+std::vector<std::string> ProtocolBridge::pollCommands(const std::string &robotId) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = pendingCommands_.find(robotId);
+  if (it == pendingCommands_.end()) return {};
+  auto cmds = std::move(it->second);
+  pendingCommands_.erase(it);
+  return cmds;
+}
+
+void ProtocolBridge::enqueueStatusResponse(const std::string &robotId, const std::string &json) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  pendingCommands_[robotId].push_back(json);
+}
+
 }  // namespace roc::protocol

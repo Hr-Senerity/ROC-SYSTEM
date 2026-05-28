@@ -4,6 +4,8 @@
 #include <memory>
 #include <vector>
 #include <functional>
+#include <map>
+#include <mutex>
 
 namespace roc::protocol {
 
@@ -14,21 +16,19 @@ class ProtocolBridge {
  public:
   ProtocolBridge();
 
-  // Route incoming raw data to the correct protocol parser
-  // Returns true if the data was recognized as a valid protocol message
   bool ingest(const std::vector<uint8_t> &data, ProtocolType hint = ProtocolType::JSON);
 
-  // Serialize a status for output
   std::vector<uint8_t> serializeStatus(const RobotStatus &s, ProtocolType proto);
-
-  // Serialize a command for output
   std::vector<uint8_t> serializeCommand(const ControlCommand &c, ProtocolType proto);
 
-  // Register callbacks
   void onStatusReport(StatusCallback cb);
   void onControlCommand(CommandCallback cb);
 
-  // Get serializer for a specific protocol
+  // Message queue: robot polls for pending commands
+  void enqueueCommand(const ControlCommand &cmd, ProtocolType proto);
+  std::vector<std::string> pollCommands(const std::string &robotId);
+  void enqueueStatusResponse(const std::string &robotId, const std::string &json);
+
   IProtocolSerializer *serializer(ProtocolType proto);
 
  private:
@@ -37,6 +37,9 @@ class ProtocolBridge {
 
   std::vector<StatusCallback> statusCallbacks_;
   std::vector<CommandCallback> commandCallbacks_;
+
+  std::mutex mutex_;
+  std::map<std::string, std::vector<std::string>> pendingCommands_;
 };
 
 }  // namespace roc::protocol

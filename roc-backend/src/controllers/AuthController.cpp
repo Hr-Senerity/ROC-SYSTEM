@@ -217,6 +217,60 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
       },
       {Get, Options});
 
+  // POST /api/auth/change-password
+  app().registerHandler(
+      "/api/auth/change-password",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb) {
+        auto authHeader = req->getHeader("Authorization");
+        if (authHeader.empty() || authHeader.find("Bearer ") != 0) {
+          cb(json(k401Unauthorized, makeResp(false, "Missing or invalid Authorization header")));
+          return;
+        }
+
+        auto payload = roc::utils::verifyJwt(authHeader.substr(7), jwtSecret);
+        if (!payload.has_value()) {
+          cb(json(k401Unauthorized, makeResp(false, "Invalid or expired token")));
+          return;
+        }
+
+        auto body = req->getJsonObject();
+        if (!body) { cb(json(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
+
+        std::string oldPw = (*body).get("old_password", "").asString();
+        std::string newPw = (*body).get("new_password", "").asString();
+        if (oldPw.empty() || newPw.empty()) {
+          cb(json(k400BadRequest, makeResp(false, "old_password and new_password required"))); return;
+        }
+        if (newPw.size() < 6) {
+          cb(json(k400BadRequest, makeResp(false, "New password must be at least 6 characters"))); return;
+        }
+
+        std::string userId = (*payload)["user_id"].asString();
+
+        try {
+          roc::db::PostgresClient pg(connStr);
+          auto user = pg.queryOneParams(
+              "SELECT password_hash, salt FROM users WHERE id = $1", {userId});
+          if (user.isNull()) { cb(json(k404NotFound, makeResp(false, "User not found"))); return; }
+
+          if (!roc::utils::verifyPassword(oldPw, user["salt"].asString(), user["password_hash"].asString())) {
+            cb(json(k403Forbidden, makeResp(false, "Current password is incorrect"))); return;
+          }
+
+          std::string salt = roc::utils::generateSalt();
+          std::string hash = roc::utils::hashPassword(newPw, salt);
+          pg.executeParams("UPDATE users SET password_hash = $1, salt = $2 WHERE id = $3",
+                           {hash, salt, userId});
+
+          cb(json(k200OK, makeResp(true, "Password changed")));
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Change password: " << e.what();
+          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+        }
+      },
+      {Post, Options});
+
   // POST /api/auth/logout
   app().registerHandler(
       "/api/auth/logout",

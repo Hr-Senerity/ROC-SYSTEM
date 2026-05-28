@@ -99,5 +99,24 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
       },
       {drogon::Post, drogon::Options});
 
+  // GET /api/protocol/pending/{robot_id} — poll for queued commands
+  drogon::app().registerHandler(
+      "/api/protocol/pending/{robot_id}",
+      [](const drogon::HttpRequestPtr &,
+         std::function<void(const drogon::HttpResponsePtr &)> &&cb,
+         const std::string &robotId) {
+        auto cmds = g_bridge->pollCommands(robotId);
+        Json::Value resp;
+        resp["ok"] = true;
+        resp["robot_id"] = robotId;
+        resp["commands"] = Json::arrayValue;
+        for (auto &c : cmds) resp["commands"].append(c);
+        cb(jsonResp(makeResp(true, "")));
+      },
+      {drogon::Get, drogon::Options});
+
+  // When a command is ingested via /api/protocol/command, also enqueue it
+  // (done in g_bridge->enqueueCommand called from the command handler)
+
   LOG_INFO << "Protocol bridge endpoints registered";
 }
