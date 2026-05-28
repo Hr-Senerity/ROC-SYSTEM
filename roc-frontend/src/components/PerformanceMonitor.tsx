@@ -1,128 +1,83 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Trash2, Activity, Circle, ChevronDown, ChevronUp, Server } from 'lucide-react';
 import type { Robot, LogEntry } from '../types/robot';
+import { useAuth, API_BASE } from '../App';
 
 interface PerformanceMonitorProps {
   projectId: string;
 }
 
 export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
-  const [robots, setRobots] = useState<Robot[]>([
-    {
-      id: '1',
-      name: '机器人-01',
-      ip: '192.168.1.101',
-      status: 'online',
-      cpu: 45,
-      memory: 62,
-      battery: 85,
-      localizationConfidence: 95,
-      position: { x: 25, y: 35, theta: 0.78 },
-      velocity: { linear: 1.2, angular: 0.05 },
-      deliveryPath: [],
-      logs: [
-        { id: '1', timestamp: '2024-12-26 10:30:15', level: 'info', message: '任务开始执行' },
-        { id: '2', timestamp: '2024-12-26 10:31:20', level: 'info', message: '导航路径规划完成' },
-        { id: '3', timestamp: '2024-12-26 10:32:05', level: 'warning', message: '检测到障碍物，重新规划路径' },
-      ],
-    },
-    {
-      id: '2',
-      name: '机器人-02',
-      ip: '192.168.1.102',
-      status: 'online',
-      cpu: 32,
-      memory: 58,
-      battery: 92,
-      localizationConfidence: 88,
-      position: { x: 70, y: 60, theta: 2.35 },
-      velocity: { linear: 0.8, angular: -0.1 },
-      deliveryPath: [],
-      logs: [
-        { id: '1', timestamp: '2024-12-26 10:25:10', level: 'info', message: '系统启动成功' },
-        { id: '2', timestamp: '2024-12-26 10:26:30', level: 'info', message: '接收到新任务' },
-      ],
-    },
-    {
-      id: '3',
-      name: '机器人-03',
-      ip: '192.168.1.103',
-      status: 'error',
-      cpu: 78,
-      memory: 85,
-      battery: 15,
-      localizationConfidence: 45,
-      position: { x: 40, y: 85, theta: 1.57 },
-      velocity: { linear: 0, angular: 0 },
-      deliveryPath: [],
-      logs: [
-        { id: '1', timestamp: '2024-12-26 10:20:00', level: 'error', message: '电池电量过低' },
-        { id: '2', timestamp: '2024-12-26 10:21:15', level: 'error', message: '传感器异常' },
-        { id: '3', timestamp: '2024-12-26 10:22:30', level: 'warning', message: '尝试返回充电站' },
-      ],
-    },
-  ]);
+  const { token } = useAuth();
+  const [robots, setRobots] = useState<Robot[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [expandedRobot, setExpandedRobot] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newRobotName, setNewRobotName] = useState('');
   const [newRobotIp, setNewRobotIp] = useState('');
 
-  const handleAddRobot = () => {
+  const fetchVehicles = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/api/vehicles`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      if (data.ok) setRobots(data.vehicles || []);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchVehicles(); }, []);
+
+  const handleAddRobot = async () => {
     if (!newRobotName.trim() || !newRobotIp.trim()) {
       alert('请填写机器人名称和IP地址');
       return;
     }
 
-    // 简单的IP格式验证
     const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
     if (!ipPattern.test(newRobotIp)) {
       alert('请输入有效的IP地址');
       return;
     }
 
-    const newRobot: Robot = {
-      id: Date.now().toString(),
-      name: newRobotName,
-      ip: newRobotIp,
-      status: 'offline',
-      cpu: 0,
-      memory: 0,
-      battery: 100,
-      localizationConfidence: 0,
-      position: { x: 0, y: 0, theta: 0 },
-      velocity: { linear: 0, angular: 0 },
-      deliveryPath: [],
-      logs: [
-        {
-          id: '1',
-          timestamp: new Date().toLocaleString('zh-CN', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          }),
-          level: 'info',
-          message: '机器人已添加，等待连接',
+    try {
+      const resp = await fetch(`${API_BASE}/api/vehicles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
-      ],
-    };
-
-    setRobots([...robots, newRobot]);
-    setNewRobotName('');
-    setNewRobotIp('');
-    setShowAddModal(false);
+        body: JSON.stringify({ name: newRobotName, ip: newRobotIp, project_id: projectId }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setRobots([...robots, data.vehicle]);
+        setNewRobotName('');
+        setNewRobotIp('');
+        setShowAddModal(false);
+      } else {
+        alert(data.message || '添加失败');
+      }
+    } catch { alert('网络错误'); }
   };
 
-  const handleDeleteRobot = (id: string) => {
-    if (window.confirm('确定要删除此机器人吗？')) {
-      setRobots(robots.filter((r) => r.id !== id));
-      if (expandedRobot === id) {
-        setExpandedRobot(null);
+  const handleDeleteRobot = async (id: string) => {
+    if (!window.confirm('确定要删除此机器人吗？')) return;
+    try {
+      const resp = await fetch(`${API_BASE}/api/vehicles/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setRobots(robots.filter(r => r.id !== id));
+        if (expandedRobot === id) setExpandedRobot(null);
+      } else {
+        alert(data.message || '删除失败');
       }
-    }
+    } catch { alert('网络错误'); }
   };
 
   const getStatusColor = (status: string) => {

@@ -5,63 +5,6 @@ import { ArrowLeft, Zap, Maximize2, Minimize2 } from 'lucide-react';
 import { VehiclePopup } from './VehiclePopup';
 import type { Robot, PathNode } from '../types/robot';
 
-// Road network — displayed on top of the user-uploaded map
-const ROAD_NETWORK: { from: PathNode; to: PathNode }[] = [
-  { from: { x: 0, y: 50 }, to: { x: 100, y: 50 } },
-  { from: { x: 50, y: 0 }, to: { x: 50, y: 100 } },
-  { from: { x: 10, y: 20 }, to: { x: 90, y: 20 } },
-  { from: { x: 10, y: 80 }, to: { x: 90, y: 80 } },
-  { from: { x: 20, y: 10 }, to: { x: 20, y: 90 } },
-  { from: { x: 80, y: 10 }, to: { x: 80, y: 90 } },
-  { from: { x: 10, y: 20 }, to: { x: 50, y: 50 } },
-  { from: { x: 90, y: 20 }, to: { x: 50, y: 50 } },
-  { from: { x: 10, y: 80 }, to: { x: 50, y: 50 } },
-  { from: { x: 90, y: 80 }, to: { x: 50, y: 50 } },
-];
-
-// Mock online vehicles with position data
-function getMockVehicles(): Robot[] {
-  return [
-    {
-      id: '1', name: '机器人-01', ip: '192.168.1.101', status: 'online',
-      cpu: 45, memory: 62, battery: 85, localizationConfidence: 95,
-      position: { x: 25, y: 35, theta: 0.78 },
-      velocity: { linear: 1.2, angular: 0.05 },
-      deliveryPath: [
-        { x: 25, y: 35 }, { x: 50, y: 50 }, { x: 80, y: 20 }, { x: 90, y: 80 },
-      ],
-      logs: [],
-    },
-    {
-      id: '2', name: '机器人-02', ip: '192.168.1.102', status: 'online',
-      cpu: 32, memory: 58, battery: 92, localizationConfidence: 88,
-      position: { x: 70, y: 60, theta: 2.35 },
-      velocity: { linear: 0.8, angular: -0.1 },
-      deliveryPath: [
-        { x: 70, y: 60 }, { x: 50, y: 50 }, { x: 20, y: 80 }, { x: 10, y: 20 },
-      ],
-      logs: [],
-    },
-    {
-      id: '3', name: '机器人-03', ip: '192.168.1.103', status: 'error',
-      cpu: 78, memory: 85, battery: 15, localizationConfidence: 45,
-      position: { x: 40, y: 85, theta: 1.57 },
-      velocity: { linear: 0, angular: 0 },
-      deliveryPath: [],
-      logs: [],
-    },
-    {
-      id: '4', name: '机器人-04', ip: '192.168.1.104', status: 'online',
-      cpu: 55, memory: 70, battery: 60, localizationConfidence: 72,
-      position: { x: 85, y: 15, theta: -0.52 },
-      velocity: { linear: 1.5, angular: 0.2 },
-      deliveryPath: [
-        { x: 85, y: 15 }, { x: 50, y: 50 }, { x: 20, y: 20 },
-      ],
-      logs: [],
-    },
-  ];
-}
 
 // Coordinate mapping: domain 0-100 → pixel range
 function mapCoord(coord: number, canvasSize: number): number {
@@ -69,12 +12,26 @@ function mapCoord(coord: number, canvasSize: number): number {
 }
 
 export function MapDetailPage() {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, token } = useAuth();
   const navigate = useNavigate();
   const { projectId, mapId } = useParams();
 
-  const [robots, setRobots] = useState<Robot[]>(getMockVehicles);
+  const [robots, setRobots] = useState<Robot[]>([]);
   const [selectedRobot, setSelectedRobot] = useState<Robot | null>(null);
+
+  // Fetch vehicles from API
+  useEffect(() => {
+    const fetchVehicles = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/api/vehicles`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await resp.json();
+        if (data.ok) setRobots(data.vehicles || []);
+      } catch { /* ignore */ }
+    };
+    fetchVehicles();
+  }, []);
 
   // WebSocket real-time updates
   useEffect(() => {
@@ -301,8 +258,8 @@ export function MapDetailPage() {
                 用户上传地图区域
               </text>
 
-              {/* Layer 3: Road network (on top of map) */}
-              {ROAD_NETWORK.map((seg, idx) => {
+              {/* Layer 3: Road network (loaded from map data) */}
+              {([] as { from: PathNode; to: PathNode }[]).map((seg, idx) => {
                 const x1 = mapCoord(seg.from.x, canvasSize);
                 const y1 = mapCoord(seg.from.y, canvasSize);
                 const x2 = mapCoord(seg.to.x, canvasSize);
@@ -322,7 +279,7 @@ export function MapDetailPage() {
               {/* Road intersection nodes */}
               {(() => {
                 const nodes = new Set<string>();
-                ROAD_NETWORK.forEach(seg => {
+                ([] as { from: PathNode; to: PathNode }[]).forEach(seg => {
                   nodes.add(`${seg.from.x},${seg.from.y}`);
                   nodes.add(`${seg.to.x},${seg.to.y}`);
                 });

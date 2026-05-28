@@ -100,16 +100,16 @@ export function ProfilePage() {
               {/* 统计信息 */}
               <div className="grid grid-cols-3 gap-4 py-4 border-y border-slate-200">
                 <div className="text-center">
-                  <div className="text-2xl text-slate-900 mb-1">12</div>
+                  <div className="text-2xl text-slate-900 mb-1">—</div>
                   <div className="text-slate-500">项目</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl text-slate-900 mb-1">48</div>
+                  <div className="text-2xl text-slate-900 mb-1">—</div>
                   <div className="text-slate-500">任务</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl text-slate-900 mb-1">156</div>
-                  <div className="text-slate-500">积分</div>
+                  <div className="text-2xl text-slate-900 mb-1">{role === 'super_admin' ? 'Admin' : 'User'}</div>
+                  <div className="text-slate-500">角色</div>
                 </div>
               </div>
 
