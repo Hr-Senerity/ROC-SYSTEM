@@ -10,7 +10,7 @@ import { ProtocolsPage } from './components/ProtocolsPage';
 import { SuperAdminPage } from './components/SuperAdminPage';
 import { MapDetailPage } from './components/MapDetailPage';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 interface AuthContextType {
   isLoggedIn: boolean;

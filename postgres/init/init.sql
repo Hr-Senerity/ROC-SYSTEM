@@ -125,7 +125,7 @@ CREATE INDEX IF NOT EXISTS idx_vehicles_status ON vehicles(status);
 -- ============================================================
 -- 初始数据: 默认超级管理员 (密码: [REDACTED_DEFAULT_PASSWORD], 首次登录后需修改)
 -- ============================================================
--- SHA-256 hash of '[REDACTED_DEFAULT_PASSWORD]' + salt '[REDACTED_DEFAULT_SALT]'
+-- SHA-256 hash of '[REDACTED_DEFAULT_PASSWORD]' + salt '[REDACTED_DEFAULT_SALT]' = '[REDACTED_DEFAULT_PASSWORD][REDACTED_DEFAULT_SALT]'
 INSERT INTO users (username, email, password_hash, salt, role, status)
 VALUES (
   'admin',

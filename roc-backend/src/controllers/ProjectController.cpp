@@ -20,7 +20,7 @@ Json::Value makeResp(bool ok, const std::string &msg = "") {
   return v;
 }
 
-HttpResponsePtr json(HttpStatusCode code, const Json::Value &v) {
+HttpResponsePtr jsonResp(HttpStatusCode code, const Json::Value &v) {
   auto resp = HttpResponse::newHttpJsonResponse(v);
   resp->setStatusCode(code);
   return resp;
@@ -50,7 +50,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
       [connStr, jwtSecret](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
@@ -65,10 +65,10 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["projects"] = projects;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "List projects: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Get, Options});
@@ -79,14 +79,14 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
       [connStr, jwtSecret](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         auto body = req->getJsonObject();
-        if (!body) { cb(json(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
+        if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
 
         std::string name = (*body).get("name", "").asString();
         std::string desc = (*body).get("description", "").asString();
-        if (name.empty()) { cb(json(k400BadRequest, makeResp(false, "name required"))); return; }
+        if (name.empty()) { cb(jsonResp(k400BadRequest, makeResp(false, "name required"))); return; }
 
         std::string userId = (*p)["user_id"].asString();
 
@@ -101,10 +101,10 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["project"] = proj;
-          cb(json(k201Created, resp));
+          cb(jsonResp(k201Created, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "Create project: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Post, Options});
@@ -116,7 +116,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
@@ -125,18 +125,18 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           roc::db::PostgresClient pg(connStr);
           std::string sql = "SELECT id, user_id, name, description, status, created_at, updated_at FROM projects WHERE id = '" + esc(projId) + "'";
           auto proj = pg.queryOne(sql);
-          if (proj.isNull()) { cb(json(k404NotFound, makeResp(false, "Not found"))); return; }
+          if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
           if (role != "super_admin" && proj["user_id"].asString() != userId) {
-            cb(json(k403Forbidden, makeResp(false, "Forbidden"))); return;
+            cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
           }
 
           Json::Value resp;
           resp["ok"] = true;
           resp["project"] = proj;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "Get project: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Get, Options});
@@ -148,9 +148,9 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
         auto body = req->getJsonObject();
-        if (!body) { cb(json(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
+        if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
@@ -158,9 +158,9 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         try {
           roc::db::PostgresClient pg(connStr);
           auto proj = pg.queryOne("SELECT user_id FROM projects WHERE id = '" + esc(projId) + "'");
-          if (proj.isNull()) { cb(json(k404NotFound, makeResp(false, "Not found"))); return; }
+          if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
           if (role != "super_admin" && proj["user_id"].asString() != userId) {
-            cb(json(k403Forbidden, makeResp(false, "Forbidden"))); return;
+            cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
           }
 
           std::string name = (*body).get("name", "").asString();
@@ -177,10 +177,10 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["project"] = updated;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "Update project: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Patch, Options});
@@ -192,7 +192,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
@@ -200,16 +200,16 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         try {
           roc::db::PostgresClient pg(connStr);
           auto proj = pg.queryOne("SELECT user_id FROM projects WHERE id = '" + esc(projId) + "'");
-          if (proj.isNull()) { cb(json(k404NotFound, makeResp(false, "Not found"))); return; }
+          if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
           if (role != "super_admin" && proj["user_id"].asString() != userId) {
-            cb(json(k403Forbidden, makeResp(false, "Forbidden"))); return;
+            cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
           }
 
           pg.execute("DELETE FROM projects WHERE id = '" + esc(projId) + "'");
-          cb(json(k200OK, makeResp(true, "Deleted")));
+          cb(jsonResp(k200OK, makeResp(true, "Deleted")));
         } catch (const std::exception &e) {
           LOG_ERROR << "Delete project: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Delete, Options});
@@ -226,10 +226,10 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["maps"] = maps;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "List maps: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Get, Options});

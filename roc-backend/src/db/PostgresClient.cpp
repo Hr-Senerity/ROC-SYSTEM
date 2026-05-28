@@ -30,12 +30,10 @@ void PostgresClient::ping() const {
 Json::Value PostgresClient::rowToJson(const pqxx::row &row) {
   Json::Value obj;
   for (size_t i = 0; i < row.size(); ++i) {
-    const char *colName = row.column_name(static_cast<int>(i));
+    std::string colName = row[i].name();
     if (row[i].is_null()) {
       obj[colName] = Json::nullValue;
     } else {
-      // Try common types
-      const auto oid = row.column_type(static_cast<int>(i));
       try {
         obj[colName] = row[i].as<std::string>();
       } catch (...) {

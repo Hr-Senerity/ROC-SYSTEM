@@ -15,6 +15,7 @@ roc-backend/lib/
 .env
 .env.local
 .env.*.local
+docker/compose/.env
 *.log
 
 # 部署配置（不提交真实环境）
@@ -30,6 +31,9 @@ scripts/config/secrets.env
 .project
 .classpath
 .settings/
+
+# Claude Code 本地配置
+.claude/
 
 # 操作系统文件
 .DS_Store

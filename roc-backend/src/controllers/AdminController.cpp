@@ -20,7 +20,7 @@ Json::Value makeResp(bool ok, const std::string &msg = "") {
   return v;
 }
 
-HttpResponsePtr json(HttpStatusCode code, const Json::Value &v) {
+HttpResponsePtr jsonResp(HttpStatusCode code, const Json::Value &v) {
   auto resp = HttpResponse::newHttpJsonResponse(v);
   resp->setStatusCode(code);
   return resp;
@@ -61,7 +61,7 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
                             std::function<void(const HttpResponsePtr &)> &&cb) {
         auto payload = authRequest(req, jwtSecret);
         if (!isSuperAdmin(payload)) {
-          cb(json(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
           return;
         }
 
@@ -122,11 +122,11 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
           resp["total"] = total;
           resp["page"] = page;
           resp["limit"] = limit;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Admin list users error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Get, Options});
@@ -139,7 +139,7 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
                             const std::string &userId) {
         auto payload = authRequest(req, jwtSecret);
         if (!isSuperAdmin(payload)) {
-          cb(json(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
           return;
         }
 
@@ -151,7 +151,7 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
               {userId});
 
           if (user.isNull()) {
-            cb(json(k404NotFound, makeResp(false, "User not found")));
+            cb(jsonResp(k404NotFound, makeResp(false, "User not found")));
             return;
           }
 
@@ -166,11 +166,11 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
           resp["user"] = user;
           resp["stats"]["projects"] = projCount.isNull() ? 0 : std::stoi(projCount["count"].asString());
           resp["stats"]["vehicles"] = vehCount.isNull() ? 0 : std::stoi(vehCount["count"].asString());
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Admin user detail error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Get, Options});
@@ -183,19 +183,19 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
                             const std::string &userId) {
         auto payload = authRequest(req, jwtSecret);
         if (!isSuperAdmin(payload)) {
-          cb(json(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
           return;
         }
 
         auto json = req->getJsonObject();
         if (!json) {
-          cb(json(k400BadRequest, makeResp(false, "Invalid JSON body")));
+          cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON body")));
           return;
         }
 
         std::string newStatus = (*json).get("status", "").asString();
         if (newStatus != "active" && newStatus != "disabled") {
-          cb(json(k400BadRequest, makeResp(false, "status must be 'active' or 'disabled'")));
+          cb(jsonResp(k400BadRequest, makeResp(false, "status must be 'active' or 'disabled'")));
           return;
         }
 
@@ -205,13 +205,13 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
           // Prevent disabling self
           std::string adminId = (*payload)["user_id"].asString();
           if (userId == adminId) {
-            cb(json(k400BadRequest, makeResp(false, "Cannot modify your own status")));
+            cb(jsonResp(k400BadRequest, makeResp(false, "Cannot modify your own status")));
             return;
           }
 
           auto existing = pg.queryOneParams("SELECT id FROM users WHERE id = $1", {userId});
           if (existing.isNull()) {
-            cb(json(k404NotFound, makeResp(false, "User not found")));
+            cb(jsonResp(k404NotFound, makeResp(false, "User not found")));
             return;
           }
 
@@ -219,11 +219,11 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
               "UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2",
               {newStatus, userId});
 
-          cb(json(k200OK, makeResp(true, "User status updated")));
+          cb(jsonResp(k200OK, makeResp(true, "User status updated")));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Admin update status error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Patch, Options});
@@ -236,14 +236,14 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
                             const std::string &userId) {
         auto payload = authRequest(req, jwtSecret);
         if (!isSuperAdmin(payload)) {
-          cb(json(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
           return;
         }
 
         try {
           std::string adminId = (*payload)["user_id"].asString();
           if (userId == adminId) {
-            cb(json(k400BadRequest, makeResp(false, "Cannot delete your own account")));
+            cb(jsonResp(k400BadRequest, makeResp(false, "Cannot delete your own account")));
             return;
           }
 
@@ -251,18 +251,18 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
 
           auto existing = pg.queryOneParams("SELECT id FROM users WHERE id = $1", {userId});
           if (existing.isNull()) {
-            cb(json(k404NotFound, makeResp(false, "User not found")));
+            cb(jsonResp(k404NotFound, makeResp(false, "User not found")));
             return;
           }
 
           // CASCADE will handle related projects, vehicles, etc.
           pg.executeParams("DELETE FROM users WHERE id = $1", {userId});
 
-          cb(json(k200OK, makeResp(true, "User deleted")));
+          cb(jsonResp(k200OK, makeResp(true, "User deleted")));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Admin delete user error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Delete, Options});
@@ -275,7 +275,7 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
                             const std::string &userId) {
         auto payload = authRequest(req, jwtSecret);
         if (!isSuperAdmin(payload)) {
-          cb(json(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
           return;
         }
 
@@ -291,11 +291,11 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
           Json::Value resp;
           resp["ok"] = true;
           resp["vehicles"] = vehicles;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Admin user vehicles error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Get, Options});
@@ -307,7 +307,7 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
                             std::function<void(const HttpResponsePtr &)> &&cb) {
         auto payload = authRequest(req, jwtSecret);
         if (!isSuperAdmin(payload)) {
-          cb(json(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
           return;
         }
 
@@ -327,11 +327,11 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
           resp["stats"]["total_projects"] = totalProjects.isNull() ? 0 : std::stoi(totalProjects["count"].asString());
           resp["stats"]["total_vehicles"] = totalVehicles.isNull() ? 0 : std::stoi(totalVehicles["count"].asString());
           resp["stats"]["online_vehicles"] = onlineVehicles.isNull() ? 0 : std::stoi(onlineVehicles["count"].asString());
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Admin stats error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Get, Options});

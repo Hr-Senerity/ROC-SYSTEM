@@ -47,7 +47,7 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
         }
 
         // Convert JSON body to bytes and ingest via JSON serializer
-        std::string body = req->getBody();
+        auto bodyView = req->getBody(); std::string body(bodyView);
         std::vector<uint8_t> data(body.begin(), body.end());
 
         if (!g_bridge->ingest(data, ProtocolType::JSON)) {
@@ -70,7 +70,7 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
           return;
         }
 
-        std::string body = req->getBody();
+        auto bodyView = req->getBody(); std::string body(bodyView);
         std::vector<uint8_t> data(body.begin(), body.end());
 
         if (!g_bridge->ingest(data, ProtocolType::JSON)) {
@@ -87,7 +87,7 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
       "/api/protocol/roc",
       [](const drogon::HttpRequestPtr &req,
          std::function<void(const drogon::HttpResponsePtr &)> &&cb) {
-        std::string body = req->getBody();
+        auto bodyView = req->getBody(); std::string body(bodyView);
         std::vector<uint8_t> data(body.begin(), body.end());
 
         if (!g_bridge->ingest(data, ProtocolType::ROC)) {

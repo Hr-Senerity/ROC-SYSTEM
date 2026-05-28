@@ -20,7 +20,7 @@ Json::Value makeResp(bool ok, const std::string &msg = "") {
   return v;
 }
 
-HttpResponsePtr json(HttpStatusCode code, const Json::Value &v) {
+HttpResponsePtr jsonResp(HttpStatusCode code, const Json::Value &v) {
   auto resp = HttpResponse::newHttpJsonResponse(v);
   resp->setStatusCode(code);
   return resp;
@@ -50,7 +50,7 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
       [connStr, jwtSecret](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
@@ -68,10 +68,10 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["vehicles"] = vehicles;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "List vehicles: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Get, Options});
@@ -82,16 +82,16 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
       [connStr, jwtSecret](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         auto body = req->getJsonObject();
-        if (!body) { cb(json(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
+        if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
 
         std::string name = (*body).get("name", "").asString();
         std::string ip = (*body).get("ip", "").asString();
         std::string projectId = (*body).get("project_id", "").asString();
         if (name.empty() || ip.empty()) {
-          cb(json(k400BadRequest, makeResp(false, "name and ip required"))); return;
+          cb(jsonResp(k400BadRequest, makeResp(false, "name and ip required"))); return;
         }
 
         std::string userId = (*p)["user_id"].asString();
@@ -114,10 +114,10 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["vehicle"] = v;
-          cb(json(k201Created, resp));
+          cb(jsonResp(k201Created, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "Create vehicle: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Post, Options});
@@ -129,15 +129,15 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &vehId) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         auto body = req->getJsonObject();
-        if (!body) { cb(json(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
+        if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
 
         try {
           roc::db::PostgresClient pg(connStr);
           auto existing = pg.queryOne("SELECT id FROM vehicles WHERE id = '" + esc(vehId) + "'");
-          if (existing.isNull()) { cb(json(k404NotFound, makeResp(false, "Not found"))); return; }
+          if (existing.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
 
           std::ostringstream sql;
           sql << "UPDATE vehicles SET last_heartbeat = NOW()";
@@ -176,10 +176,10 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
           Json::Value resp;
           resp["ok"] = true;
           resp["vehicle"] = v;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
         } catch (const std::exception &e) {
           LOG_ERROR << "Update vehicle: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Patch, Options});
@@ -191,15 +191,15 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg, const std::string 
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &vehId) {
         auto p = authReq(req, jwtSecret);
-        if (!p) { cb(json(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
 
         try {
           roc::db::PostgresClient pg(connStr);
           pg.execute("DELETE FROM vehicles WHERE id = '" + esc(vehId) + "'");
-          cb(json(k200OK, makeResp(true, "Deleted")));
+          cb(jsonResp(k200OK, makeResp(true, "Deleted")));
         } catch (const std::exception &e) {
           LOG_ERROR << "Delete vehicle: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
         }
       },
       {Delete, Options});

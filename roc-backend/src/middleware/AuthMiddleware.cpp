@@ -1,6 +1,7 @@
 #include "middleware/AuthMiddleware.h"
 
 #include <json/json.h>
+#include <cstdlib>
 #include "utils/JwtHelper.h"
 
 namespace roc::middleware {
@@ -71,10 +72,8 @@ void SuperAdminFilter::doFilter(const drogon::HttpRequestPtr &req,
   }
 
   std::string token = authHeader.substr(7);
-  auto secret = drogon::app().getCustomConfig()["jwt_secret"].asString();
-  if (secret.empty()) {
-    secret = "roc-system-default-secret-change-in-production";
-  }
+  const char *envSecret = std::getenv("JWT_SECRET");
+  std::string secret = envSecret ? std::string(envSecret) : "roc-system-default-secret-change-in-production";
 
   auto payload = roc::utils::verifyJwt(token, secret);
   if (!payload.has_value()) {
