@@ -35,12 +35,29 @@ export function VehiclePopup({ robot, x, y, onClose }: VehiclePopupProps) {
     return 'text-green-600';
   };
 
+  const popupWidth = 288; // w-72 = 288px
+  const popupHeight = 400; // approximate max height
+  const margin = 10;
+
+  let left = x + 16;
+  let top = y - 12;
+
+  // Clamp to viewport
+  if (left + popupWidth > window.innerWidth - margin) {
+    left = x - popupWidth - 16;
+  }
+  if (top + popupHeight > window.innerHeight - margin) {
+    top = window.innerHeight - popupHeight - margin;
+  }
+  if (left < margin) left = margin;
+  if (top < margin) top = margin;
+
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
         className="absolute z-50 bg-white rounded-xl shadow-2xl border border-slate-200 p-4 w-72"
-        style={{ left: x + 16, top: y - 12 }}
+        style={{ left, top }}
       >
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg text-slate-900 font-medium">{robot.name}</h3>

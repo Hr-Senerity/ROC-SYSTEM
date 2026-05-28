@@ -92,15 +92,45 @@ export function MapDetailPage() {
   const panStart = useRef({ x: 0, y: 0 });
   const panStartPan = useRef({ x: 0, y: 0 });
 
-  const canvasSize = 700;
-  const mapMargin = 30; // margin inside canvas for the uploaded map area
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState(700);
+
+  // Responsive canvas
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const resize = () => {
+      const rect = el.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height) - 32;
+      setCanvasSize(Math.max(400, Math.min(1200, size)));
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  const mapMargin = 30;
 
   const onlineVehicles = robots.filter(r => r.status === 'online');
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      setZoom(prevZoom => {
+        const newZoom = Math.max(0.5, Math.min(3, prevZoom + delta));
+        setPan(prevPan => ({
+          x: mx - (mx - prevPan.x) * (newZoom / prevZoom),
+          y: my - (my - prevPan.y) * (newZoom / prevZoom),
+        }));
+        return newZoom;
+      });
+    } else {
+      setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
+    }
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -312,7 +342,7 @@ export function MapDetailPage() {
                         <line x1={x1} y1={y1} x2={x2} y2={y2}
                           stroke="#f59e0b" strokeWidth="3.5" strokeLinecap="round"
                           markerEnd="url(#arrowhead)" />
-                        <circle cx={x1} cy={y1} r="6" fill="#f59e0b" stroke="white" strokeWidth="2" />
+                        <circle cx={x1} cy={y1} r={6/zoom} fill="#f59e0b" stroke="white" strokeWidth={2/zoom} />
                       </g>
                     );
                   })}
@@ -322,7 +352,7 @@ export function MapDetailPage() {
                       <circle
                         cx={mapCoord(last.x, canvasSize)}
                         cy={mapCoord(last.y, canvasSize)}
-                        r="6" fill="#f59e0b" stroke="white" strokeWidth="2"
+                        r={6/zoom} fill="#f59e0b" stroke="white" strokeWidth={2/zoom}
                       />
                     );
                   })()}
@@ -335,7 +365,7 @@ export function MapDetailPage() {
                 const cy = mapCoord(robot.position.y, canvasSize);
                 const isSelected = selectedRobot?.id === robot.id;
                 const angleRad = robot.position.theta;
-                const arrowLen = 14;
+                const arrowLen = 14 / zoom;
                 const ax = cx + Math.cos(angleRad) * arrowLen;
                 const ay = cy + Math.sin(angleRad) * arrowLen;
 
@@ -355,14 +385,14 @@ export function MapDetailPage() {
                   >
                     {/* Selection pulse ring */}
                     {isSelected && (
-                      <circle cx={cx} cy={cy} r="18" fill="none" stroke="#f59e0b" strokeWidth="2.5" opacity="0.8">
+                      <circle cx={cx} cy={cy} r={18/zoom} fill="none" stroke="#f59e0b" strokeWidth="2.5" opacity="0.8">
                         <animate attributeName="r" from="14" to="24" dur="1.2s" repeatCount="indefinite" />
                         <animate attributeName="opacity" from="0.8" to="0" dur="1.2s" repeatCount="indefinite" />
                       </circle>
                     )}
 
                     {/* Vehicle body */}
-                    <circle cx={cx} cy={cy} r="11"
+                    <circle cx={cx} cy={cy} r={11/zoom}
                       fill={isSelected ? '#f59e0b' : '#3b82f6'}
                       stroke="white" strokeWidth="2.5"
                       filter="url(#shadow)" />
@@ -372,10 +402,10 @@ export function MapDetailPage() {
                       stroke="white" strokeWidth="2.5" strokeLinecap="round" />
 
                     {/* Label background + text */}
-                    <rect x={cx - 22} y={cy - 30} width="44" height="16" rx="4"
+                    <rect x={cx - 22} y={cy - 30/zoom} width={44/zoom} height={16/zoom} rx="4"
                       fill="white" stroke="#cbd5e1" strokeWidth="0.5" opacity="0.9" />
                     <text x={cx} y={cy - 18} textAnchor="middle" fill="#1e293b"
-                      fontSize="10" fontWeight="bold" style={{ pointerEvents: 'none' }}>
+                      fontSize={10/zoom} fontWeight="bold" style={{ pointerEvents: 'none' }}>
                       {robot.name.replace('机器人-', '车')}
                     </text>
                   </g>
