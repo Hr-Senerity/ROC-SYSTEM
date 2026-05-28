@@ -31,6 +31,9 @@ scripts/config/secrets.env
 .classpath
 .settings/
 
+# Claude 配置（本地工作树/记忆/设置，不提交）
+.claude/
+
 # 操作系统文件
 .DS_Store
 Thumbs.db
