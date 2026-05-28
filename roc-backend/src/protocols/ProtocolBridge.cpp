@@ -76,7 +76,6 @@ IProtocolSerializer *ProtocolBridge::serializer(ProtocolType proto) {
   switch (proto) {
     case ProtocolType::JSON: return jsonSerializer_.get();
     case ProtocolType::ROC:  return rocSerializer_.get();
-    case ProtocolType::ROS:  return nullptr;  // ROS not yet implemented
   }
   return nullptr;
 }

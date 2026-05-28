@@ -83,6 +83,11 @@ CREATE TABLE IF NOT EXISTS maps (
 
 CREATE INDEX IF NOT EXISTS idx_maps_project ON maps(project_id);
 
+-- 地图坐标系与路网数据 (Phase 4 P1)
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS coordinate_origin_x DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS coordinate_origin_y DOUBLE PRECISION DEFAULT 0;
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS road_network JSONB;
+
 -- 车辆/机器人表
 CREATE TABLE IF NOT EXISTS vehicles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

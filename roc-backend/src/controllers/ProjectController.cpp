@@ -224,7 +224,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                 const std::string &projId) {
         try {
           roc::db::PostgresClient pg(connStr);
-          auto maps = pg.query("SELECT id, project_id, name, image_url, is_active, created_at FROM maps WHERE project_id = '" + esc(projId) + "' ORDER BY created_at DESC");
+          auto maps = pg.query("SELECT id, project_id, name, image_url, is_active, coordinate_origin_x, coordinate_origin_y, road_network, created_at FROM maps WHERE project_id = '" + esc(projId) + "' ORDER BY created_at DESC");
           Json::Value resp;
           resp["ok"] = true;
           resp["maps"] = maps;
@@ -304,6 +304,69 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         }
       },
       {Post, Options});
+
+  // PATCH /api/projects/{pid}/maps/{mid} — rename map
+  app().registerHandler(
+      "/api/projects/{pid}/maps/{mid}",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb,
+                            const std::string &, const std::string &mapId) {
+        auto p = authReq(req, jwtSecret);
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        auto body = req->getJsonObject();
+        if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
+
+        try {
+          roc::db::PostgresClient pg(connStr);
+          auto m = pg.queryOne("SELECT id FROM maps WHERE id = '" + esc(mapId) + "'");
+          if (m.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Map not found"))); return; }
+
+          if (body->isMember("name")) {
+            pg.execute("UPDATE maps SET name = '" + esc((*body)["name"].asString()) + "' WHERE id = '" + esc(mapId) + "'");
+          }
+          if (body->isMember("coordinate_origin_x")) {
+            pg.execute("UPDATE maps SET coordinate_origin_x = " + std::to_string((*body)["coordinate_origin_x"].asDouble()) + " WHERE id = '" + esc(mapId) + "'");
+          }
+          if (body->isMember("coordinate_origin_y")) {
+            pg.execute("UPDATE maps SET coordinate_origin_y = " + std::to_string((*body)["coordinate_origin_y"].asDouble()) + " WHERE id = '" + esc(mapId) + "'");
+          }
+          if (body->isMember("road_network")) {
+            std::string rnJson = (*body)["road_network"].toStyledString();
+            pg.execute("UPDATE maps SET road_network = '" + esc(rnJson) + "'::jsonb WHERE id = '" + esc(mapId) + "'");
+          }
+
+          auto updated = pg.queryOne(
+              "SELECT id, project_id, name, image_url, is_active, coordinate_origin_x, coordinate_origin_y, road_network, created_at FROM maps WHERE id = '" + esc(mapId) + "'");
+          Json::Value resp;
+          resp["ok"] = true;
+          resp["map"] = updated;
+          cb(jsonResp(k200OK, resp));
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Update map: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
+      },
+      {Patch, Options});
+
+  // DELETE /api/projects/{pid}/maps/{mid}
+  app().registerHandler(
+      "/api/projects/{pid}/maps/{mid}",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb,
+                            const std::string &, const std::string &mapId) {
+        auto p = authReq(req, jwtSecret);
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+
+        try {
+          roc::db::PostgresClient pg(connStr);
+          pg.execute("DELETE FROM maps WHERE id = '" + esc(mapId) + "'");
+          cb(jsonResp(k200OK, makeResp(true, "Map deleted")));
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Delete map: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
+      },
+      {Delete, Options});
 
   LOG_INFO << "Project routes registered";
 }

@@ -14,8 +14,7 @@ namespace protocol {
 
 // 协议类型枚举
 enum class ProtocolType {
-    ROS,    // Robot Operating System
-    ROC,    // Robot Operation Control
+    ROC,    // Robot Operation Control (binary)
     JSON    // JSON over HTTP/WebSocket
 };
 

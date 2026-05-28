@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth, API_BASE } from '../App';
-import { ArrowLeft, Zap, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowLeft, Zap, Maximize2, Minimize2, Download } from 'lucide-react';
 import { VehiclePopup } from './VehiclePopup';
 import type { Robot, PathNode } from '../types/robot';
 
@@ -17,6 +17,7 @@ export function MapDetailPage() {
   const { projectId, mapId } = useParams();
 
   const [robots, setRobots] = useState<Robot[]>([]);
+  const [roadNetwork, setRoadNetwork] = useState<{ from: PathNode; to: PathNode }[]>([]);
   const [selectedRobot, setSelectedRobot] = useState<Robot | null>(null);
 
   // Fetch vehicles from API
@@ -32,6 +33,36 @@ export function MapDetailPage() {
     };
     fetchVehicles();
   }, []);
+
+  // Fetch map data (road network)
+  useEffect(() => {
+    const fetchMapData = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/api/projects/${projectId}/maps`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          const map = (data.maps || []).find((m: any) => m.id === mapId);
+          if (map?.road_network) {
+            const rn = typeof map.road_network === 'string' ? JSON.parse(map.road_network) : map.road_network;
+            const edges: { from: PathNode; to: PathNode }[] = [];
+            if (rn.nodes && rn.edges) {
+              const nodeMap = new Map<string, PathNode>();
+              rn.nodes.forEach((n: any) => nodeMap.set(n.id, { x: n.x, y: n.y }));
+              rn.edges.forEach((e: any) => {
+                const from = nodeMap.get(e.from);
+                const to = nodeMap.get(e.to);
+                if (from && to) edges.push({ from, to });
+              });
+            }
+            setRoadNetwork(edges);
+          }
+        }
+      } catch { /* ignore */ }
+    };
+    if (projectId && mapId) fetchMapData();
+  }, [projectId, mapId]);
 
   // WebSocket real-time updates
   useEffect(() => {
@@ -167,6 +198,38 @@ export function MapDetailPage() {
   const handleZoomOut = () => setZoom(z => Math.max(0.5, z - 0.2));
   const handleReset = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
 
+  const handleExport = () => {
+    // Discretize each edge into points with poses (x,y,z,qx,qy,qz,qw)
+    const points: number[][] = [];
+    roadNetwork.forEach(seg => {
+      const dx = seg.to.x - seg.from.x;
+      const dy = seg.to.y - seg.from.y;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      const steps = Math.max(2, Math.ceil(length / 5)); // discretize every 5 units
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const x = seg.from.x + dx * t;
+        const y = seg.from.y + dy * t;
+        const z = 0;
+        // Quaternion from direction angle (rotation around Z)
+        const theta = Math.atan2(dy, dx);
+        const qx = 0;
+        const qy = 0;
+        const qz = Math.sin(theta / 2);
+        const qw = Math.cos(theta / 2);
+        points.push([x, y, z, qx, qy, qz, qw]);
+      }
+    });
+    const csv = points.map(p => p.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `road_network_map_${mapId}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (!isLoggedIn) {
     navigate('/login');
     return null;
@@ -205,6 +268,11 @@ export function MapDetailPage() {
             <button onClick={handleReset} className="px-3 py-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">
               重置
             </button>
+            {roadNetwork.length > 0 && (
+              <button onClick={handleExport} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm flex items-center gap-1">
+                <Download className="w-4 h-4" /> 导出
+              </button>
+            )}
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
               className="p-1.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50"
@@ -289,7 +357,7 @@ export function MapDetailPage() {
               </text>
 
               {/* Layer 3: Road network (loaded from map data) */}
-              {([] as { from: PathNode; to: PathNode }[]).map((seg, idx) => {
+              {roadNetwork.map((seg, idx) => {
                 const x1 = mapCoord(seg.from.x, canvasSize);
                 const y1 = mapCoord(seg.from.y, canvasSize);
                 const x2 = mapCoord(seg.to.x, canvasSize);
@@ -309,7 +377,7 @@ export function MapDetailPage() {
               {/* Road intersection nodes */}
               {(() => {
                 const nodes = new Set<string>();
-                ([] as { from: PathNode; to: PathNode }[]).forEach(seg => {
+                roadNetwork.forEach(seg => {
                   nodes.add(`${seg.from.x},${seg.from.y}`);
                   nodes.add(`${seg.to.x},${seg.to.y}`);
                 });

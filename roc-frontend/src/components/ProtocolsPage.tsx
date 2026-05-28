@@ -2,87 +2,13 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Zap, FileCode, Code, Braces } from 'lucide-react';
 
-type ProtocolType = 'ros' | 'roc' | 'json';
+type ProtocolType = 'roc' | 'json';
 
 export function ProtocolsPage() {
   const navigate = useNavigate();
-  const [activeProtocol, setActiveProtocol] = useState<ProtocolType>('ros');
+  const [activeProtocol, setActiveProtocol] = useState<ProtocolType>('roc');
 
   const protocols = {
-    ros: {
-      title: 'ROS 协议',
-      icon: FileCode,
-      description: 'Robot Operating System 通信协议',
-      content: `
-# ROS 协议说明
-
-ROC平台完全支持 ROS（Robot Operating System）通信协议，可无缝对接使用ROS框架开发的机器人系统。
-
-## 支持的ROS版本
-
-- ROS Noetic (推荐)
-- ROS Melodic
-- ROS Kinetic
-
-## 主要功能
-
-### 1. 话题订阅与发布
-
-ROC平台支持标准的ROS话题（Topic）通信机制，可以：
-- 订阅机器人发布的传感器数据
-- 发布控制指令到机器人
-- 实时监控话题消息流
-
-### 2. 服务调用
-
-支持ROS服务（Service）调用：
-- 同步服务请求/响应
-- 异步服务处理
-- 服务状态监控
-
-### 3. 参数服务器
-
-完整支持ROS参数服务器功能：
-- 参数读取与设置
-- 参数动态更新
-- 参数持久化存储
-
-## 接入示例
-
-\`\`\`python
-# Python ROS节点示例
-import rospy
-from geometry_msgs.msg import Twist
-
-def velocity_publisher():
-    rospy.init_node('roc_velocity_publisher')
-    pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-    rate = rospy.Rate(10)
-    
-    while not rospy.is_shutdown():
-        vel_msg = Twist()
-        vel_msg.linear.x = 0.5
-        vel_msg.angular.z = 0.0
-        pub.publish(vel_msg)
-        rate.sleep()
-\`\`\`
-
-## 常用话题
-
-| 话题名称 | 消息类型 | 描述 |
-|---------|---------|------|
-| /cmd_vel | geometry_msgs/Twist | 速度控制 |
-| /odom | nav_msgs/Odometry | 里程计数据 |
-| /scan | sensor_msgs/LaserScan | 激光雷达数据 |
-| /map | nav_msgs/OccupancyGrid | 地图数据 |
-
-## 注意事项
-
-1. 确保ROS Master正确配置
-2. 网络连接稳定
-3. 消息频率控制在合理范围内
-4. 及时处理异常情况
-      `,
     },
     roc: {
       title: 'ROC 协议',
