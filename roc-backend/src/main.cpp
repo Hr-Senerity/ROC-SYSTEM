@@ -109,6 +109,9 @@ int main() {
   LOG_INFO << "Starting roc-backend on " << cfg.http.listenHost << ":" << cfg.http.listenPort;
   LOG_INFO << "DB target " << cfg.db.host << ":" << cfg.db.port << "/" << cfg.db.name;
 
+  // Serve uploaded map images from document root
+  app().setDocumentRoot(".");
+
   app().addListener(cfg.http.listenHost, static_cast<uint16_t>(cfg.http.listenPort));
   app().run();
   return 0;

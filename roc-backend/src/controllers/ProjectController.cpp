@@ -3,6 +3,8 @@
 #include <drogon/drogon.h>
 #include <json/json.h>
 #include <sstream>
+#include <sys/stat.h>
+#include <ctime>
 
 #include "db/PostgresClient.h"
 #include "utils/JwtHelper.h"
@@ -233,6 +235,75 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         }
       },
       {Get, Options});
+
+  // POST /api/projects/{id}/maps/upload — upload map image
+  app().registerHandler(
+      "/api/projects/{id}/maps/upload",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb,
+                            const std::string &projId) {
+        auto p = authReq(req, jwtSecret);
+        if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+
+        // Parse multipart form
+        auto mp = req->getMultipartParser();
+        if (!mp || mp->getFilesMap().empty()) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "No file uploaded")));
+          return;
+        }
+
+        auto &files = mp->getFilesMap();
+        std::string mapName = "Untitled Map";
+        std::string savedPath;
+
+        // Find the file and optional name field
+        for (auto &[fieldName, file] : files) {
+          if (fieldName == "name") {
+            mapName = std::string(file.data(), file.fileLength());
+          } else if (fieldName == "file" || file.getOriginalFileName().empty()) {
+            // Save the file
+            std::string origName = file.getOriginalFileName();
+            if (origName.empty()) origName = "map_" + std::to_string(time(nullptr)) + ".png";
+            std::string ext = origName.find('.') != std::string::npos
+                ? origName.substr(origName.rfind('.'))
+                : ".png";
+            std::string filename = "map_" + projId.substr(0, 8) + "_" +
+                std::to_string(time(nullptr)) + ext;
+            savedPath = "/static/maps/" + filename;
+
+            std::string fullPath = drogon::app().getDocumentRoot() + savedPath;
+            auto dir = drogon::app().getDocumentRoot() + "/static/maps";
+            mkdir(dir.c_str(), 0755);
+            file.saveAs(fullPath);
+          }
+        }
+
+        if (savedPath.empty()) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "No valid file found")));
+          return;
+        }
+
+        // Insert map record
+        try {
+          roc::db::PostgresClient pg(connStr);
+          std::string mapId = pg.insertReturning(
+              "INSERT INTO maps (project_id, name, image_url) VALUES ('" +
+              esc(projId) + "', '" + esc(mapName) + "', '" + esc(savedPath) + "') RETURNING id");
+
+          auto m = pg.queryOne(
+              "SELECT id, project_id, name, image_url, is_active, created_at FROM maps WHERE id = '" +
+              esc(mapId) + "'");
+
+          Json::Value resp;
+          resp["ok"] = true;
+          resp["map"] = m;
+          cb(jsonResp(k201Created, resp));
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Map upload: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
+      },
+      {Post, Options});
 
   LOG_INFO << "Project routes registered";
 }

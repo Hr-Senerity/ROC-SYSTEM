@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth, API_BASE } from '../App';
 import { ArrowLeft, Zap, FileText, Map, Activity, CheckCircle } from 'lucide-react';
 import { PerformanceMonitor } from './PerformanceMonitor';
+import { MapUploadModal } from './MapUploadModal';
 
 type TabType = 'details' | 'maps' | 'performance';
 
@@ -30,6 +31,7 @@ export function ProjectDetailPage() {
   const [maps, setMaps] = useState<MapData[]>([]);
   const [projectData, setProjectData] = useState<ProjectData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   useEffect(() => {
     if (!isLoggedIn) { navigate('/login'); return; }
@@ -199,7 +201,9 @@ export function ProjectDetailPage() {
                         </div>
                       </div>
                     ))}
-                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-4 flex items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors">
+                    <div
+                      onClick={() => setShowUploadModal(true)}
+                      className="border-2 border-dashed border-slate-300 rounded-lg p-4 flex items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors">
                       <div className="text-center">
                         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-2">
                           <Map className="w-6 h-6 text-slate-400" />
@@ -218,6 +222,15 @@ export function ProjectDetailPage() {
           </div>
         </div>
       </div>
+      {showUploadModal && (
+        <MapUploadModal
+          projectId={projectId || ''}
+          token={token || ''}
+          apiBase={API_BASE}
+          onClose={() => setShowUploadModal(false)}
+          onUploaded={fetchMaps}
+        />
+      )}
     </div>
   );
 }
