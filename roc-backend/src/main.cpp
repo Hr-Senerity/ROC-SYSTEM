@@ -29,10 +29,8 @@ int main() {
     return 1;
   }
 
-  // Store JWT secret in app config for middleware access
-  Json::Value customCfg;
-  customCfg["jwt_secret"] = cfg.auth.jwtSecret;
-  app().setCustomConfig(customCfg);
+  // JWT secret shared with middleware via global config
+  // TODO: use app().getCustomConfig() when upgrading Drogon
 
   const auto connStr = roc::db::makeConnStr(
       cfg.db.host, cfg.db.port, cfg.db.name, cfg.db.user, cfg.db.password);

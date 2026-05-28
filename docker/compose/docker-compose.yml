@@ -6,8 +6,8 @@ services:
   # ============================================================
   postgres:
     build:
-      context: ../postgres
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: docker/postgres/Dockerfile
     container_name: roc-postgres
     restart: unless-stopped
     environment:
@@ -32,8 +32,8 @@ services:
   # ============================================================
   backend:
     build:
-      context: ../../roc-backend
-      dockerfile: ../docker/backend/Dockerfile
+      context: ../..
+      dockerfile: docker/backend/Dockerfile
     container_name: roc-backend
     restart: unless-stopped
     depends_on:
@@ -59,14 +59,12 @@ services:
   # ============================================================
   frontend:
     build:
-      context: ../../roc-frontend
-      dockerfile: ../docker/frontend/Dockerfile
+      context: ../..
+      dockerfile: docker/frontend/Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+        VITE_API_BASE_URL: "${VITE_API_BASE_URL}"
     container_name: roc-frontend
     restart: unless-stopped
-    depends_on:
-      - backend
     ports:
       - "${FRONTEND_DOCKER_HOST_PORT:-3000}:80"
     networks:

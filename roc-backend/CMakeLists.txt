@@ -5,10 +5,11 @@ project(roc_backend LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Drogon + libpqxx + OpenSSL
+# Drogon + libpqxx + OpenSSL + jsoncpp
 find_package(Drogon CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PQXX REQUIRED IMPORTED_TARGET libpqxx)
+pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 find_package(OpenSSL REQUIRED)
 
 add_executable(roc-backend-server
@@ -49,6 +50,7 @@ target_include_directories(roc-backend-server PRIVATE src)
 target_link_libraries(roc-backend-server PRIVATE
   Drogon::Drogon
   PkgConfig::PQXX
+  PkgConfig::JSONCPP
   OpenSSL::SSL
   OpenSSL::Crypto
 )

@@ -78,7 +78,8 @@ export function MapDetailPage() {
 
   // WebSocket real-time updates
   useEffect(() => {
-    const wsUrl = API_BASE.replace(/^http/, 'ws') + '/ws/status';
+    const wsScheme = API_BASE ? API_BASE.replace(/^http/, 'ws') : 'ws://' + window.location.host;
+    const wsUrl = wsScheme + '/ws/status';
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout>;
 

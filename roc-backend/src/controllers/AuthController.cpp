@@ -19,7 +19,7 @@ static Json::Value makeResp(bool ok, const std::string &msg = "") {
   return v;
 }
 
-static HttpResponsePtr json(HttpStatusCode code, const Json::Value &v) {
+static HttpResponsePtr jsonResp(HttpStatusCode code, const Json::Value &v) {
   auto resp = HttpResponse::newHttpJsonResponse(v);
   resp->setStatusCode(code);
   return resp;
@@ -34,23 +34,23 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
       "/api/auth/register",
       [connStr, jwtSecret, tokenExpire](const HttpRequestPtr &req,
                                          std::function<void(const HttpResponsePtr &)> &&cb) {
-        auto json = req->getJsonObject();
-        if (!json) {
-          cb(json(k400BadRequest, makeResp(false, "Invalid JSON body")));
+        auto body = req->getJsonObject();
+        if (!body) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON body")));
           return;
         }
 
-        std::string username = (*json).get("username", "").asString();
-        std::string email = (*json).get("email", "").asString();
-        std::string password = (*json).get("password", "").asString();
+        std::string username = (*body).get("username", "").asString();
+        std::string email = (*body).get("email", "").asString();
+        std::string password = (*body).get("password", "").asString();
 
         if (username.empty() || email.empty() || password.empty()) {
-          cb(json(k400BadRequest, makeResp(false, "username, email, password are required")));
+          cb(jsonResp(k400BadRequest, makeResp(false, "username, email, password are required")));
           return;
         }
 
         if (password.size() < 6) {
-          cb(json(k400BadRequest, makeResp(false, "Password must be at least 6 characters")));
+          cb(jsonResp(k400BadRequest, makeResp(false, "Password must be at least 6 characters")));
           return;
         }
 
@@ -62,7 +62,7 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
               "SELECT id FROM users WHERE username = $1 OR email = $2",
               {username, email});
           if (!existing.isNull()) {
-            cb(json(k409Conflict, makeResp(false, "Username or email already exists")));
+            cb(jsonResp(k409Conflict, makeResp(false, "Username or email already exists")));
             return;
           }
 
@@ -92,11 +92,11 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
           resp["ok"] = true;
           resp["token"] = token;
           resp["user"] = payload;
-          cb(json(k201Created, resp));
+          cb(jsonResp(k201Created, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Register error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Post, Options});
@@ -106,17 +106,17 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
       "/api/auth/login",
       [connStr, jwtSecret, tokenExpire](const HttpRequestPtr &req,
                                          std::function<void(const HttpResponsePtr &)> &&cb) {
-        auto json = req->getJsonObject();
-        if (!json) {
-          cb(json(k400BadRequest, makeResp(false, "Invalid JSON body")));
+        auto body = req->getJsonObject();
+        if (!body) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON body")));
           return;
         }
 
-        std::string username = (*json).get("username", "").asString();
-        std::string password = (*json).get("password", "").asString();
+        std::string username = (*body).get("username", "").asString();
+        std::string password = (*body).get("password", "").asString();
 
         if (username.empty() || password.empty()) {
-          cb(json(k400BadRequest, makeResp(false, "username and password are required")));
+          cb(jsonResp(k400BadRequest, makeResp(false, "username and password are required")));
           return;
         }
 
@@ -128,12 +128,12 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
               {username});
 
           if (user.isNull()) {
-            cb(json(k401Unauthorized, makeResp(false, "Invalid username or password")));
+            cb(jsonResp(k401Unauthorized, makeResp(false, "Invalid username or password")));
             return;
           }
 
           if (user["status"].asString() == "disabled") {
-            cb(json(k403Forbidden, makeResp(false, "Account is disabled, contact administrator")));
+            cb(jsonResp(k403Forbidden, makeResp(false, "Account is disabled, contact administrator")));
             return;
           }
 
@@ -141,7 +141,7 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
           std::string salt = user["salt"].asString();
 
           if (!roc::utils::verifyPassword(password, salt, hash)) {
-            cb(json(k401Unauthorized, makeResp(false, "Invalid username or password")));
+            cb(jsonResp(k401Unauthorized, makeResp(false, "Invalid username or password")));
             return;
           }
 
@@ -163,11 +163,11 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
           resp["ok"] = true;
           resp["token"] = token;
           resp["user"] = payload;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Login error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Post, Options});
@@ -180,7 +180,7 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
         // Extract token from Authorization header
         std::string authHeader = req->getHeader("Authorization");
         if (authHeader.empty() || authHeader.find("Bearer ") != 0) {
-          cb(json(k401Unauthorized, makeResp(false, "Missing or invalid Authorization header")));
+          cb(jsonResp(k401Unauthorized, makeResp(false, "Missing or invalid Authorization header")));
           return;
         }
 
@@ -188,7 +188,7 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
 
         auto payload = roc::utils::verifyJwt(token, jwtSecret);
         if (!payload.has_value()) {
-          cb(json(k401Unauthorized, makeResp(false, "Invalid or expired token")));
+          cb(jsonResp(k401Unauthorized, makeResp(false, "Invalid or expired token")));
           return;
         }
 
@@ -201,18 +201,18 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
               {userId});
 
           if (user.isNull()) {
-            cb(json(k404NotFound, makeResp(false, "User not found")));
+            cb(jsonResp(k404NotFound, makeResp(false, "User not found")));
             return;
           }
 
           Json::Value resp;
           resp["ok"] = true;
           resp["user"] = user;
-          cb(json(k200OK, resp));
+          cb(jsonResp(k200OK, resp));
 
         } catch (const std::exception &e) {
           LOG_ERROR << "Auth/me error: " << e.what();
-          cb(json(k500InternalServerError, makeResp(false, "Internal server error")));
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
         }
       },
       {Get, Options});
@@ -223,7 +223,7 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
       [](const HttpRequestPtr &,
          std::function<void(const HttpResponsePtr &)> &&cb) {
         // Stateless JWT — client discards token
-        cb(json(k200OK, makeResp(true, "Logged out")));
+        cb(jsonResp(k200OK, makeResp(true, "Logged out")));
       },
       {Post, Options});
 

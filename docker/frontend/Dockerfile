@@ -5,7 +5,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # 构建参数 — 后端 API 地址
-ARG VITE_API_BASE_URL=http://localhost:8080
+ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 # 复制 package.json 和 package-lock.json（如果存在）
