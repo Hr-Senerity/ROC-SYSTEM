@@ -255,7 +255,10 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
             return;
           }
 
-          // CASCADE will handle related projects, vehicles, etc.
+          // Audit log
+          pg.executeParams("INSERT INTO audit_logs (user_id, action, target_type, target_id, detail) VALUES ($1, 'delete_user', 'user', $2, $3)",
+                           {adminId, userId, std::string("Deleted by ") + adminId});
+
           pg.executeParams("DELETE FROM users WHERE id = $1", {userId});
 
           cb(jsonResp(k200OK, makeResp(true, "User deleted")));

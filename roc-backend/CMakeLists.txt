@@ -18,6 +18,8 @@ add_executable(roc-backend-server
   src/config/AppConfig.h
   src/db/PostgresClient.cpp
   src/db/PostgresClient.h
+  src/db/ConnectionPool.cpp
+  src/db/ConnectionPool.h
   src/utils/PasswordHash.cpp
   src/utils/PasswordHash.h
   src/utils/JwtHelper.cpp

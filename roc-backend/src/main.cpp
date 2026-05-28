@@ -2,6 +2,7 @@
 
 #include "config/AppConfig.h"
 #include "db/PostgresClient.h"
+#include "db/ConnectionPool.h"
 #include "controllers/AuthController.h"
 #include "controllers/AdminController.h"
 #include "controllers/ProjectController.h"
@@ -34,6 +35,9 @@ int main() {
 
   const auto connStr = roc::db::makeConnStr(
       cfg.db.host, cfg.db.port, cfg.db.name, cfg.db.user, cfg.db.password);
+
+  // Initialize connection pool
+  roc::db::initPool(connStr, 4);
 
   // Health check
   app().registerHandler(

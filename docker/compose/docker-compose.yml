@@ -51,6 +51,11 @@ services:
       JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
     ports:
       - "${BACKEND_DOCKER_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
       - roc-net
 
@@ -67,6 +72,11 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_DOCKER_HOST_PORT:-3000}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
       - roc-net
 
