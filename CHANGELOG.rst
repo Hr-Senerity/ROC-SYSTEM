@@ -13,11 +13,6 @@
 
 新增
 ----
-- 完整项目架构审查与文档化：70+ 源文件全量模块分析
-- README.md 全面重写：新增 Mermaid 架构图、模块调用关系、数据流图、数据库 ER 图
-- .codex/memory.md 项目记忆文件：技术栈速查、关键文件地图、模式与约定、常驻任务规则
-- .codex/plan.md 实施计划日志：记录所有完成任务和待办事项
-- 常驻任务规则：任何代码变更后必须同步更新 memory.md、README.md、CHANGELOG.rst
 - 完整 C++ 后端（Drogon），24 个 REST API 端点 + WebSocket 实时通信
 - JWT 认证体系（HMAC-SHA256），super_admin / regular 双角色权限分离
 - SHA-256 + 随机盐密码哈希，密码修改 API
