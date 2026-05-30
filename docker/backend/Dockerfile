@@ -65,6 +65,7 @@ RUN if [ "$APT_MIRROR" = "tsinghua" ]; then \
 # Runtime 阶段：安装所有运行时依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     # Drogon 运行时依赖
     uuid-dev \
     zlib1g \
