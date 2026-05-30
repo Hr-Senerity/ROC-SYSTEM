@@ -4,8 +4,8 @@
 
 本文档记录项目的所有重要变更。
 
-格式基于 `Keep a Changelog <https://keepachangelog.com/zh-CN/1.0.0/>`_，
-并且本项目遵循 `语义化版本 <https://semver.org/lang/zh-CN/>`_。
+格式基于 Keep a Changelog <https://keepachangelog.com/zh-CN/1.0.0/>_，
+并且本项目遵循 语义化版本 <https://semver.org/lang/zh-CN/>_。
 
 ==========
 [未发布]
@@ -13,6 +13,11 @@
 
 新增
 ----
+- 完整项目架构审查与文档化：70+ 源文件全量模块分析
+- README.md 全面重写：新增 Mermaid 架构图、模块调用关系、数据流图、数据库 ER 图
+- .codex/memory.md 项目记忆文件：技术栈速查、关键文件地图、模式与约定、常驻任务规则
+- .codex/plan.md 实施计划日志：记录所有完成任务和待办事项
+- 常驻任务规则：任何代码变更后必须同步更新 memory.md、README.md、CHANGELOG.rst
 - 完整 C++ 后端（Drogon），24 个 REST API 端点 + WebSocket 实时通信
 - JWT 认证体系（HMAC-SHA256），super_admin / regular 双角色权限分离
 - SHA-256 + 随机盐密码哈希，密码修改 API
@@ -25,14 +30,12 @@
 - 协议 HTTP 端点：POST /api/protocol/status、/api/protocol/command、/api/protocol/roc
 - WebSocket 实时推送（/ws/status）
 - 取消 ROS 协议支持，专注 ROC + JSON
-
 - 前端完整认证接入：登录/注册/修改密码调用真实 API
 - 前端路由权限守卫：ProtectedRoute / SuperAdminRoute
 - 超级管理员前端页面：用户列表（分页/搜索/筛选）、停用/启用/删除、详情、统计
 - 项目页面接入真实 API，清除所有 mock 数据（新用户空白起始状态）
 - 个人中心重写：数据展示、密码修改、通知设置
 - HomePage 导航菜单"用户管理"入口（仅 super_admin 可见）
-
 - 地图放大详情页（MapDetailPage），5 层架构：网格底图 → 用户地图 → 路网 → 路径高亮 → 车辆标记
 - 地图响应式画布（ResizeObserver，400-1200px）+ 光标锚定缩放
 - 地图标记缩放补偿（视觉大小恒定）+ 弹出窗口边界检测
@@ -43,10 +46,8 @@
 - 移除"我的路径"侧边栏 → 路径高亮改为车辆点击触发
 - Robot 数据模型扩展：position{x,y,theta}、velocity{linear,angular}、deliveryPath[]
 - 共享类型文件 types/robot.ts
-
 - 完整数据库 Schema：users / projects / maps / vehicles，含坐标原点和路网 JSONB 字段
 - 默认超级管理员账户：admin / [REDACTED_DEFAULT_PASSWORD]
-
 - Docker Compose 编排（postgres + backend + frontend），健康检查 + 网络隔离
 - 前端 Dockerfile 支持 VITE_API_BASE_URL 构建参数（无默认值防缓存）
 - 后端部署脚本新增 JWT_SECRET / JWT_EXPIRE_SECONDS 环境变量
