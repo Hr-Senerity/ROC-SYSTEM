@@ -234,7 +234,7 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
                   运行日志
                 </h4>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {robot.logs.map((log) => (
+                  {(robot.logs || []).map((log) => (
                     <div
                       key={log.id}
                       className="bg-white rounded-lg p-3 flex items-start gap-3"

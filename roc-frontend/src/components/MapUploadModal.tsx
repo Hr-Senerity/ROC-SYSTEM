@@ -33,28 +33,27 @@ export function MapUploadModal({ projectId, token, apiBase, onClose, onUploaded 
   const handleUpload = async () => {
     if (!file) { setError('请选择文件'); return; }
     setUploading(true);
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('name', name || 'Untitled');
-
     try {
-      const resp = await fetch(`${apiBase}/api/projects/${projectId}/maps/upload`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        onUploaded();
-        onClose();
-      } else {
-        setError(data.message || '上传失败');
-      }
-    } catch {
-      setError('网络错误');
-    }
-    setUploading(false);
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const b64 = (reader.result as string).split(',')[1];
+        try {
+          const resp = await fetch(`${apiBase}/api/projects/${projectId}/maps/upload`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ name: name || 'Untitled', image_base64: b64 }),
+          });
+          const data = await resp.json();
+          if (data.ok) { onUploaded(); onClose(); }
+          else { setError(data.message || '上传失败'); }
+        } catch { setError('网络错误'); }
+        setUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch { setError('读取文件失败'); setUploading(false); }
   };
 
   return (

@@ -4,6 +4,12 @@ FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG APT_MIRROR=default
+RUN if [ "$APT_MIRROR" = "tsinghua" ]; then \
+      sed -i 's|http://.*archive.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources; \
+      sed -i 's|http://.*security.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources; \
+    fi
+
 # 第一步：安装基础构建工具
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -49,6 +55,12 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+ARG APT_MIRROR=default
+RUN if [ "$APT_MIRROR" = "tsinghua" ]; then \
+      sed -i 's|http://.*archive.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources; \
+      sed -i 's|http://.*security.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources; \
+    fi
 
 # Runtime 阶段：安装所有运行时依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -34,6 +34,8 @@ services:
     build:
       context: ../..
       dockerfile: docker/backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR:-default}
     container_name: roc-backend
     restart: unless-stopped
     depends_on:
@@ -68,12 +70,13 @@ services:
       dockerfile: docker/frontend/Dockerfile
       args:
         VITE_API_BASE_URL: "${VITE_API_BASE_URL}"
+        NPM_MIRROR: ${NPM_MIRROR:-default}
     container_name: roc-frontend
     restart: unless-stopped
     ports:
       - "${FRONTEND_DOCKER_HOST_PORT:-3000}:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:80/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

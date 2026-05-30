@@ -18,6 +18,7 @@ export function MapDetailPage() {
 
   const [robots, setRobots] = useState<Robot[]>([]);
   const [roadNetwork, setRoadNetwork] = useState<{ from: PathNode; to: PathNode }[]>([]);
+  const [mapImageUrl, setMapImageUrl] = useState("");
   const [selectedRobot, setSelectedRobot] = useState<Robot | null>(null);
 
   // Fetch vehicles from API
@@ -28,7 +29,17 @@ export function MapDetailPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await resp.json();
-        if (data.ok) setRobots(data.vehicles || []);
+        if (data.ok) {
+          const vehicles = (data.vehicles || []).map((v: any) => ({
+            ...v,
+            status: v.status || 'offline',
+            position: { x: parseFloat(v.position_x) || 0, y: parseFloat(v.position_y) || 0, theta: parseFloat(v.position_theta) || 0 },
+            velocity: { linear: parseFloat(v.velocity_linear) || 0, angular: parseFloat(v.velocity_angular) || 0 },
+            deliveryPath: v.delivery_path ? (typeof v.delivery_path === 'string' ? JSON.parse(v.delivery_path) : v.delivery_path) : [],
+            logs: v.logs || [],
+          }));
+          setRobots(vehicles);
+        }
       } catch { /* ignore */ }
     };
     fetchVehicles();
@@ -44,6 +55,7 @@ export function MapDetailPage() {
         const data = await resp.json();
         if (data.ok) {
           const map = (data.maps || []).find((m: any) => m.id === mapId);
+          if (map?.image_url) setMapImageUrl(map.image_url);
           if (map?.road_network) {
             const rn = typeof map.road_network === 'string' ? JSON.parse(map.road_network) : map.road_network;
             const edges: { from: PathNode; to: PathNode }[] = [];
@@ -131,9 +143,11 @@ export function MapDetailPage() {
     const el = canvasRef.current;
     if (!el) return;
     const resize = () => {
-      const rect = el.getBoundingClientRect();
-      const size = Math.min(rect.width, rect.height) - 32;
-      setCanvasSize(Math.max(400, Math.min(1200, size)));
+      // Use the flex container available space
+      const availW = window.innerWidth - 320;
+      const availH = window.innerHeight - 160;
+      const size = Math.min(availW, availH);
+      setCanvasSize(Math.max(400, size));
     };
     resize();
     window.addEventListener('resize', resize);
@@ -142,7 +156,7 @@ export function MapDetailPage() {
 
   const mapMargin = 30;
 
-  const onlineVehicles = robots.filter(r => r.status === 'online');
+  const onlineVehicles = robots.filter(r => r.status === 'online' && r.position);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -240,7 +254,8 @@ export function MapDetailPage() {
     : 'min-h-screen bg-gradient-to-br from-slate-100 to-slate-200';
 
   return (
-    <div className={containerClass}>
+    <>
+      <div className={containerClass} style={{ overflow: 'hidden', position: 'relative' }}>
       {/* Top bar */}
       <nav className="bg-white shadow-sm border-b border-slate-200 px-4 py-3">
         <div className="flex justify-between items-center">
@@ -290,12 +305,13 @@ export function MapDetailPage() {
 
       {/* Map canvas */}
       <div
-        className="flex items-center justify-center p-4"
+        className="w-full flex-1 flex items-center justify-center overflow-hidden"
         style={{ height: isFullscreen ? 'calc(100vh - 60px)' : 'calc(100vh - 120px)' }}
+        ref={canvasRef}
       >
         <div
           className="relative rounded-xl overflow-hidden shadow-lg border border-slate-300 cursor-grab bg-white"
-          style={{ width: canvasSize, height: canvasSize }}
+          style={mapImageUrl ? { width: canvasSize, height: canvasSize, backgroundImage: `url(${mapImageUrl})`, backgroundSize: "contain", backgroundRepeat: "no-repeat", backgroundPosition: "center" } : { width: canvasSize, height: canvasSize }}
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -327,34 +343,12 @@ export function MapDetailPage() {
                 </marker>
               </defs>
 
-              {/* Layer 1: Gray grid background (full canvas) */}
-              <rect width={canvasSize} height={canvasSize} fill="#f8fafc" />
-              <rect width={canvasSize} height={canvasSize} fill="url(#minorGrid)" />
-              <rect width={canvasSize} height={canvasSize} fill="url(#majorGrid)" />
+              {/* Layer 1: Background */}
+              <rect width={canvasSize} height={canvasSize} fill="rgba(255,255,255,0.05)" />
+              {!mapImageUrl && <rect width={canvasSize} height={canvasSize} fill="url(#minorGrid)" />}
+              {!mapImageUrl && <rect width={canvasSize} height={canvasSize} fill="url(#majorGrid)" />}
 
-              {/* Layer 2: User-uploaded map image area */}
-              <rect
-                x={mapMargin} y={mapMargin}
-                width={canvasSize - mapMargin * 2}
-                height={canvasSize - mapMargin * 2}
-                fill="#f1f5f9"
-                stroke="#94a3b8"
-                strokeWidth="2"
-                rx="4"
-              />
-              {/* Simulated map features (buildings/obstacles) */}
-              <rect x={mapMargin + 40} y={mapMargin + 30} width="50" height="40" fill="#cbd5e1" rx="2" opacity="0.7" />
-              <rect x={mapMargin + 150} y={mapMargin + 60} width="60" height="30" fill="#cbd5e1" rx="2" opacity="0.7" />
-              <rect x={mapMargin + 300} y={mapMargin + 40} width="40" height="55" fill="#cbd5e1" rx="2" opacity="0.7" />
-              <rect x={mapMargin + 400} y={mapMargin + 100} width="70" height="35" fill="#cbd5e1" rx="2" opacity="0.7" />
-              <rect x={mapMargin + 100} y={mapMargin + 200} width="45" height="60" fill="#cbd5e1" rx="2" opacity="0.7" />
-              <rect x={mapMargin + 350} y={mapMargin + 250} width="55" height="40" fill="#cbd5e1" rx="2" opacity="0.7" />
-              <rect x={mapMargin + 500} y={mapMargin + 180} width="35" height="50" fill="#cbd5e1" rx="2" opacity="0.7" />
-              {/* Map label */}
-              <text x={canvasSize / 2} y={mapMargin + 18}
-                textAnchor="middle" fill="#94a3b8" fontSize="12">
-                用户上传地图区域
-              </text>
+              {!mapImageUrl && <text x={canvasSize / 2} y={canvasSize / 2} textAnchor="middle" fill="#94a3b8" fontSize="14">未上传地图图片</text>}
 
               {/* Layer 3: Road network (loaded from map data) */}
               {roadNetwork.map((seg, idx) => {
@@ -493,24 +487,35 @@ export function MapDetailPage() {
           )}
         </div>
       </div>
+    </div>
+      <MapLegend />
+    </>
+  );
+}
 
-      {/* Legend */}
-      <div className="absolute bottom-6 left-6 bg-white/95 backdrop-blur-sm rounded-lg p-3 shadow-md border border-slate-200">
-        <div className="text-slate-600 text-xs mb-2 font-medium">图例</div>
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <div className="w-3 h-3 rounded-full bg-blue-500 border border-white" /> 在线车辆
+// Legend rendered outside main container to avoid overflow clipping
+function MapLegend() {
+  return (
+    <div style={{ position: 'fixed', bottom: 16, left: 16, zIndex: 9999, background: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(4px)', borderRadius: 8, padding: '6px 8px', boxShadow: '0 1px 4px rgba(0,0,0,0.15)', border: '1px solid #e2e8f0', pointerEvents: 'none' }}>
+      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2, fontWeight: 600 }}>图例</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 12px' }}>
+        {[
+          { color: '#3b82f6', shape: 'circle', label: '在线车辆' },
+          { color: '#f59e0b', shape: 'circle', label: '已选中' },
+          { color: '#94a3b8', shape: 'circle', label: '离线/异常' },
+          { color: '#3b82f6', shape: 'arrow', label: '方向' },
+          { color: '#64748b', shape: 'line', label: '路网' },
+          { color: '#f59e0b', shape: 'line', label: '配送路径' },
+          { color: '#475569', shape: 'dot', label: '路口节点' },
+        ].map((item, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#64748b', whiteSpace: 'nowrap', gridColumn: i === 6 ? '1 / span 2' : undefined }}>
+            {item.shape === 'circle' && <div style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, border: '1px solid white', flexShrink: 0 }} />}
+            {item.shape === 'line' && <div style={{ width: 14, height: 2, background: item.color, flexShrink: 0 }} />}
+            {item.shape === 'dot' && <div style={{ width: 6, height: 6, borderRadius: '50%', background: item.color, flexShrink: 0 }} />}
+            {item.shape === 'arrow' && <span style={{ color: item.color, flexShrink: 0, lineHeight: 1 }}>→</span>}
+            {item.label}
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <div className="w-3 h-3 rounded-full bg-amber-500 border border-white" /> 已选中
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <div className="w-3 h-0.5 bg-slate-400" style={{ width: 14 }} /> 路网
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
-            <div className="w-3 h-0.5 bg-amber-500" style={{ width: 14 }} /> 配送路径
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   );
