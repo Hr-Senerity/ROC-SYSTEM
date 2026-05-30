@@ -9,7 +9,6 @@ export function ProtocolsPage() {
   const [activeProtocol, setActiveProtocol] = useState<ProtocolType>('roc');
 
   const protocols = {
-    },
     roc: {
       title: 'ROC 协议',
       icon: Code,
