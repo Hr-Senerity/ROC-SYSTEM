@@ -16,6 +16,9 @@ void registerProtocolBridge(std::shared_ptr<roc::protocol::ProtocolBridge> bridg
 static drogon::HttpResponsePtr jsonResp(const Json::Value &v, int code = 200) {
   auto resp = drogon::HttpResponse::newHttpJsonResponse(v);
   resp->setStatusCode(static_cast<drogon::HttpStatusCode>(code));
+  resp->addHeader("Access-Control-Allow-Origin", "*");
+  resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+  resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   return resp;
 }
 
