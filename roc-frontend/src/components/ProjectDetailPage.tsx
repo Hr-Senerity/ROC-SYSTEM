@@ -179,17 +179,23 @@ export function ProjectDetailPage() {
                   <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {maps.map((m) => (
                       <div key={m.id}
-                        className={`border-2 rounded-lg p-4 cursor-pointer transition-all relative ${
+                        className={`border-2 rounded-lg p-4 cursor-pointer transition-all relative group ${
                           m.is_active
                             ? 'border-blue-500 shadow-lg shadow-blue-200 ring-2 ring-blue-300'
                             : 'border-slate-200 hover:border-blue-400'
                         }`}>
                         {m.is_active && (
-                          <div className="absolute top-2 right-2 bg-blue-500 text-white px-2 py-1 rounded-full flex items-center gap-1 z-10">
+                          <div className="absolute top-2 left-2 bg-blue-500 text-white px-2 py-1 rounded-full flex items-center gap-1 z-10">
                             <CheckCircle className="w-3 h-3" />
                             <span className="text-xs">使用中</span>
                           </div>
                         )}
+                        <button
+                          onClick={(e) => handleMapDelete(e, m.id, m.name)}
+                          className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-50 transition-all z-10"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-500" />
+                        </button>
                         <div onClick={() => handleMapClick(m.id)}
                           className="aspect-video bg-slate-100 rounded-lg mb-3 flex items-center justify-center overflow-hidden hover:bg-slate-200 transition-colors relative">
                           {m.image_url ? (
@@ -211,19 +217,12 @@ export function ProjectDetailPage() {
                             <h3 className="text-slate-900 mb-1">{m.name}</h3>
                             <p className="text-slate-600 text-sm">更新于 {new Date(m.created_at).toLocaleDateString('zh-CN')}</p>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <button onClick={(e) => handleMapActivate(e, m.id)}
-                              className={`px-3 py-1 rounded-lg text-xs transition-colors ${
-                                m.is_active ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
-                              }`}>
-                              {m.is_active ? '使用中' : '启用'}
-                            </button>
-                            <button onClick={(e) => handleMapDelete(e, m.id, m.name)}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                              title="删除地图">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                          <button onClick={(e) => handleMapActivate(e, m.id)}
+                            className={`px-3 py-1 rounded-lg text-xs transition-colors ${
+                              m.is_active ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
+                            }`}>
+                            {m.is_active ? '使用中' : '启用'}
+                          </button>
                         </div>
                       </div>
                     ))}
