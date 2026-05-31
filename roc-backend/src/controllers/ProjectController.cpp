@@ -2,6 +2,7 @@
 
 #include <drogon/drogon.h>
 #include <json/json.h>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
@@ -254,8 +255,11 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         std::string fn = "map_" + projId.substr(0,8) + "_" + std::to_string(time(nullptr)) + ".png";
         std::string savedPath = "/static/maps/" + fn;
         auto d = drogon::app().getDocumentRoot() + "/static/maps";
-        mkdir(d.c_str(), 0755);
+        std::error_code ec;
+        std::filesystem::create_directories(d, ec);
+        if (ec) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to create upload directory"))); return; }
         std::ofstream ofs(d + "/" + fn, std::ios::binary);
+        if (!ofs) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file"))); return; }
         ofs.write(raw.data(), raw.size()); ofs.close();
         try {
           roc::db::PostgresClient pg(connStr);

@@ -53,6 +53,8 @@ services:
       JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
     ports:
       - "${BACKEND_DOCKER_HOST_PORT:-8080}:8080"
+    volumes:
+      - roc_static:/app/static
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
       interval: 30s
@@ -86,6 +88,8 @@ services:
 volumes:
   roc_pgdata:
     name: roc_pgdata
+  roc_static:
+    name: roc_static
 
 networks:
   roc-net:
