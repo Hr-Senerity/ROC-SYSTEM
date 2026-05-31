@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth, API_BASE } from '../App';
-import { ArrowLeft, Zap, FileText, Map, Activity, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Zap, FileText, Map, Activity, CheckCircle, Trash2 } from 'lucide-react';
 import { PerformanceMonitor } from './PerformanceMonitor';
 import { MapUploadModal } from './MapUploadModal';
 
@@ -68,6 +68,25 @@ export function ProjectDetailPage() {
   const handleMapActivate = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setMaps(maps.map(m => ({ ...m, is_active: m.id === id })));
+  };
+
+  const handleMapDelete = async (e: React.MouseEvent, mapId: string, mapName: string) => {
+    e.stopPropagation();
+    if (!window.confirm(`确定要删除地图「${mapName}」吗？此操作不可撤销。`)) return;
+    try {
+      const resp = await fetch(`${API_BASE}/api/projects/${projectId}/maps/${mapId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setMaps(maps.filter(m => m.id !== mapId));
+      } else {
+        alert(data.message || '删除失败');
+      }
+    } catch {
+      alert('网络错误，删除失败');
+    }
   };
 
   return (
@@ -192,12 +211,19 @@ export function ProjectDetailPage() {
                             <h3 className="text-slate-900 mb-1">{m.name}</h3>
                             <p className="text-slate-600 text-sm">更新于 {new Date(m.created_at).toLocaleDateString('zh-CN')}</p>
                           </div>
-                          <button onClick={(e) => handleMapActivate(e, m.id)}
-                            className={`px-3 py-1 rounded-lg text-xs transition-colors ${
-                              m.is_active ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
-                            }`}>
-                            {m.is_active ? '使用中' : '启用'}
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={(e) => handleMapActivate(e, m.id)}
+                              className={`px-3 py-1 rounded-lg text-xs transition-colors ${
+                                m.is_active ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
+                              }`}>
+                              {m.is_active ? '使用中' : '启用'}
+                            </button>
+                            <button onClick={(e) => handleMapDelete(e, m.id, m.name)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="删除地图">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
