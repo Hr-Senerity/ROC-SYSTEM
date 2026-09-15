@@ -87,7 +87,14 @@ std::optional<RobotStatus> JsonSerializer::deserializeStatus(const std::vector<u
   Json::CharReaderBuilder r;
   std::string errs;
   std::istringstream iss(s);
-  if (!Json::parseFromStream(r, iss, &j, &errs)) return std::nullopt;
+  if (!Json::parseFromStream(r, iss, &j, &errs) || !j.isObject()) return std::nullopt;
+  if (!j.isMember("robot_id") || !j["robot_id"].isString() ||
+      j["robot_id"].asString().empty()) return std::nullopt;
+  const bool hasTelemetry = j.isMember("online") || j.isMember("cpu_usage") ||
+      j.isMember("memory_usage") || j.isMember("battery_level") ||
+      j.isMember("localization_confidence") || j.isMember("position") ||
+      j.isMember("velocity");
+  if (!hasTelemetry || j.isMember("command_type")) return std::nullopt;
   return jsonToStatus(j);
 }
 
@@ -105,7 +112,12 @@ std::optional<ControlCommand> JsonSerializer::deserializeCommand(const std::vect
   Json::CharReaderBuilder r;
   std::string errs;
   std::istringstream iss(s);
-  if (!Json::parseFromStream(r, iss, &j, &errs)) return std::nullopt;
+  if (!Json::parseFromStream(r, iss, &j, &errs) || !j.isObject()) return std::nullopt;
+  if (!j.isMember("robot_id") || !j["robot_id"].isString() ||
+      j["robot_id"].asString().empty() || !j.isMember("command_type") ||
+      !j["command_type"].isString() || j["command_type"].asString().empty()) {
+    return std::nullopt;
+  }
   return jsonToCommand(j);
 }
 

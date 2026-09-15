@@ -1,443 +1,347 @@
 import { useState } from 'react';
+import {
+  ArrowLeft, Braces, Code2, KeyRound, Radio, ShieldAlert, Zap,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Zap, FileCode, Code, Braces } from 'lucide-react';
 
-type ProtocolType = 'roc' | 'json';
+type ProtocolType = 'json' | 'roc' | 'realtime';
 
-export function ProtocolsPage() {
+const deviceEndpoints = [
+  { method: 'POST', path: '/api/protocol/status', purpose: '上报 JSON 遥测快照；写入数据库后触发项目实时事件' },
+  { method: 'POST', path: '/api/protocol/command', purpose: '向指定车辆的内存队列写入 JSON 控制指令' },
+  { method: 'GET', path: '/api/protocol/pending/{robot_id}', purpose: '读取并清空该车辆当前的待执行指令' },
+] as const;
+
+const credentialEndpoints = [
+  { method: 'GET', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '查看是否已配置、是否启用及凭据尾号' },
+  { method: 'POST', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '首次签发或轮换凭据；明文仅在本次响应中出现' },
+  { method: 'DELETE', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '立即撤销该车辆的设备凭据' },
+] as const;
+
+const statusFields = [
+  ['robot_id', 'string · UUID', '必填', '平台车辆 ID，必须与 Device token 对应'],
+  ['online', 'boolean', '遥测至少一项', '在线状态；最终映射为 online / offline'],
+  ['cpu_usage', 'number', '遥测至少一项', 'CPU 使用率，0–100'],
+  ['memory_usage', 'number', '遥测至少一项', '内存使用率，0–100'],
+  ['battery_level', 'integer', '遥测至少一项', '电量，0–100'],
+  ['localization_confidence', 'number', '遥测至少一项', '定位置信度，0–100'],
+  ['position', 'object', '遥测至少一项', '{ x, y, theta }，各值须为有限数值'],
+  ['velocity', 'object', '遥测至少一项', '{ linear, angular }，各值须为有限数值'],
+] as const;
+
+const jsonExample = `{
+  "robot_id": "8e2cb75e-27f3-4772-a9c1-b5d4b750ac75",
+  "online": true,
+  "cpu_usage": 32.4,
+  "memory_usage": 48.1,
+  "battery_level": 85,
+  "localization_confidence": 96.5,
+  "position": { "x": 1.5, "y": 2.3, "theta": 0.5 },
+  "velocity": { "linear": 0.4, "angular": 0.1 }
+}`;
+
+const curlExample = `curl -X POST "https://<HOST>/api/protocol/status" \\
+  -H "Authorization: Device <DEVICE_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  --data '${jsonExample}'`;
+
+const commandExample = `{
+  "robot_id": "8e2cb75e-27f3-4772-a9c1-b5d4b750ac75",
+  "command_type": "move",
+  "linear_x": 0.4,
+  "linear_y": 0,
+  "linear_z": 0,
+  "angular_x": 0,
+  "angular_y": 0,
+  "angular_z": 0.1,
+  "task_params": "{\\"task_id\\":\\"demo-001\\"}"
+}`;
+
+const rocFrame = `偏移   长度      类型       内容
+0      4 byte    uint32     Magic = 0x524F4320 ("ROC ")
+4      2 byte    uint16     Type = 0x0001 (STATUS_REPORT)
+6      4 byte    uint32     Payload 字节长度 N
+10     N byte    bytes      状态负载`;
+
+const rocPayload = `顺序   类型                 字段
+1      uint16 + UTF-8      robot_id 字节长度 + UUID
+2      uint8               online (0 / 1)
+3      float64             cpu_usage
+4      float64             memory_usage
+5      int32               battery_level
+6      float64             localization_confidence
+7      float64             position_x
+8      float64             position_y
+9      float64             position_theta
+10     float64             velocity_linear
+11     float64             velocity_angular`;
+
+const websocketFlow = `// 1. 服务端连接成功后发送
+{ "type": "hello", "authentication": "first_message", "protocol_version": 1 }
+
+// 2. 客户端必须在 5 秒内发送 JWT（不是 Device token）
+{ "type": "authenticate", "token": "<ACCOUNT_JWT>" }
+
+// 3. 收到 authenticated 后订阅有权限的项目
+{ "type": "subscribe", "project_id": "<PROJECT_UUID>" }
+
+// 4. 保活；服务端响应 { "type": "pong" }
+{ "type": "ping" }`;
+
+function MethodBadge({ method }: { method: string }) {
+  const tone = method === 'GET'
+    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+    : method === 'DELETE'
+      ? 'bg-rose-50 text-rose-700 ring-rose-200'
+      : 'bg-blue-50 text-blue-700 ring-blue-200';
+  return <span className={`inline-flex w-fit rounded-md px-2 py-1 text-[11px] font-bold ring-1 ring-inset ${tone}`}>{method}</span>;
+}
+
+function CodeBlock({ children }: { children: string }) {
+  return (
+    <pre className="mt-3 max-w-full overflow-x-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-100 sm:text-sm">
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+function SectionTitle({ children, description }: { children: string; description?: string }) {
+  return (
+    <div>
+      <h3 className="font-semibold text-slate-950">{children}</h3>
+      {description && <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>}
+    </div>
+  );
+}
+
+export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
-  const [activeProtocol, setActiveProtocol] = useState<ProtocolType>('roc');
-
-  const protocols = {
-    roc: {
-      title: 'ROC 协议',
-      icon: Code,
-      description: 'ROC平台通用控制协议',
-      content: `
-# ROC 通用协议说明
-
-ROC协议是专为机器人运营控制设计的轻量级、高效的通信协议。
-
-## 协议特点
-
-- **轻量级**：最小化数据传输开销
-- **高效性**：优化的消息格式，降低延迟
-- **通用性**：支持各类机器人系统
-- **可扩展**：灵活的协议扩展机制
-
-## 消息格式
-
-ROC协议使用二进制格式传输，消息结构如下：
-
-\`\`\`
-+--------+--------+------------+--------+
-| Header | Type   | Length     | Data   |
-| 4字节  | 2字节  | 4字节      | N字节  |
-+--------+--------+------------+--------+
-\`\`\`
-
-### 消息头（Header）
-- 魔术字：0x524F4320 ("ROC ")
-- 用于协议识别和版本控制
-
-### 消息类型（Type）
-- 0x0001: 控制指令
-- 0x0002: 状态查询
-- 0x0003: 配置更新
-- 0x0004: 数据上报
-- 0x0005: 心跳包
-
-### 数据长度（Length）
-- 32位无符号整数
-- 表示Data字段的字节长度
-
-## 控制指令
-
-### 移动控制
-\`\`\`
-类型: 0x0001
-数据格式:
-{
-  "command": "move",
-  "linear": {
-    "x": 0.5,  // m/s
-    "y": 0.0,
-    "z": 0.0
-  },
-  "angular": {
-    "x": 0.0,
-    "y": 0.0,
-    "z": 0.2   // rad/s
-  }
-}
-\`\`\`
-
-### 任务执行
-\`\`\`
-类型: 0x0001
-数据格式:
-{
-  "command": "task",
-  "task_id": "task_001",
-  "action": "start",
-  "params": {
-    "waypoints": [[0, 0], [1, 1], [2, 0]]
-  }
-}
-\`\`\`
-
-## 状态上报
-
-\`\`\`
-类型: 0x0004
-数据格式:
-{
-  "robot_id": "robot_001",
-  "timestamp": 1640000000,
-  "battery": 85,
-  "position": {
-    "x": 1.5,
-    "y": 2.3,
-    "theta": 0.5
-  },
-  "status": "idle" | "running" | "error"
-}
-\`\`\`
-
-## 心跳机制
-
-- 频率：1Hz
-- 超时时间：5秒
-- 超时后自动重连
-
-## 安全机制
-
-1. CRC校验确保数据完整性
-2. 消息序列号防止重放攻击
-3. 超时重传机制
-4. 消息加密（可选）
-      `,
-    },
-    json: {
-      title: 'JSON 协议',
-      icon: Braces,
-      description: 'JSON 数据交换格式',
-      content: `
-# JSON 协议说明
-
-ROC平台支持标准的JSON格式进行数据交换，适用于HTTP API和WebSocket通信。
-
-## 基础格式
-
-所有JSON消息遵循统一的基础结构：
-
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "request" | "response" | "event",
-  "data": { ... }
-}
-\`\`\`
-
-## API端点
-
-### 1. 机器人控制
-
-**端点**: \`POST /api/v1/robot/control\`
-
-请求示例：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "request",
-  "data": {
-    "robot_id": "robot_001",
-    "command": "move",
-    "velocity": {
-      "linear_x": 0.5,
-      "angular_z": 0.2
-    }
-  }
-}
-\`\`\`
-
-响应示例：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000100,
-  "type": "response",
-  "data": {
-    "success": true,
-    "message": "Command executed successfully",
-    "command_id": "cmd_12345"
-  }
-}
-\`\`\`
-
-### 2. 状态查询
-
-**端点**: \`GET /api/v1/robot/status/:robot_id\`
-
-响应示例：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "response",
-  "data": {
-    "robot_id": "robot_001",
-    "status": {
-      "online": true,
-      "battery": 85,
-      "position": {
-        "x": 1.5,
-        "y": 2.3,
-        "orientation": 0.5
-      },
-      "velocity": {
-        "linear": 0.5,
-        "angular": 0.2
-      },
-      "task": {
-        "id": "task_001",
-        "status": "running",
-        "progress": 65
-      }
-    }
-  }
-}
-\`\`\`
-
-### 3. 地图数据
-
-**端点**: \`GET /api/v1/map/:map_id\`
-
-响应示例：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "response",
-  "data": {
-    "map_id": "map_001",
-    "name": "仓库地图",
-    "resolution": 0.05,
-    "width": 384,
-    "height": 384,
-    "origin": {
-      "x": 0.0,
-      "y": 0.0,
-      "orientation": 0.0
-    },
-    "data_url": "/api/v1/map/map_001/data"
-  }
-}
-\`\`\`
-
-### 4. 任务管理
-
-**创建任务**: \`POST /api/v1/task/create\`
-
-请求示例：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "request",
-  "data": {
-    "robot_id": "robot_001",
-    "task_type": "delivery",
-    "priority": "high",
-    "waypoints": [
-      {"x": 0, "y": 0},
-      {"x": 5, "y": 5},
-      {"x": 10, "y": 0}
-    ],
-    "params": {
-      "speed": 0.5,
-      "timeout": 300
-    }
-  }
-}
-\`\`\`
-
-## WebSocket 事件
-
-### 连接
-\`\`\`
-ws://api.roc-platform.com/ws/v1/robot/:robot_id
-\`\`\`
-
-### 实时事件
-
-位置更新：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "event",
-  "event_type": "position_update",
-  "data": {
-    "robot_id": "robot_001",
-    "position": {
-      "x": 1.5,
-      "y": 2.3,
-      "orientation": 0.5
-    }
-  }
-}
-\`\`\`
-
-告警事件：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "event",
-  "event_type": "alert",
-  "data": {
-    "robot_id": "robot_001",
-    "level": "warning",
-    "message": "Battery level low",
-    "value": 15
-  }
-}
-\`\`\`
-
-## 错误处理
-
-错误响应格式：
-\`\`\`json
-{
-  "version": "1.0",
-  "timestamp": 1640000000000,
-  "type": "response",
-  "data": {
-    "success": false,
-    "error": {
-      "code": "INVALID_PARAM",
-      "message": "Invalid parameter: robot_id is required",
-      "details": {}
-    }
-  }
-}
-\`\`\`
-
-常见错误码：
-- \`INVALID_PARAM\`: 参数错误
-- \`NOT_FOUND\`: 资源不存在
-- \`UNAUTHORIZED\`: 未授权
-- \`TIMEOUT\`: 请求超时
-- \`INTERNAL_ERROR\`: 服务器内部错误
-      `,
-    },
-  };
-
-  const currentProtocol = protocols[activeProtocol];
-  const ProtocolIcon = currentProtocol.icon;
+  const [activeProtocol, setActiveProtocol] = useState<ProtocolType>('json');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* 顶部导航栏 */}
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/')}
-                className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                返回首页
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                <Zap className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-xl text-slate-900">ROC平台</span>
+    <div className={embedded ? 'text-slate-950' : 'min-h-screen overflow-x-hidden bg-slate-50 text-slate-950'}>
+      {!embedded && (
+        <header className="border-b border-slate-200 bg-white">
+          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="inline-flex min-h-10 items-center gap-2 rounded-md text-sm text-slate-600 transition-colors hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            >
+              <ArrowLeft className="size-5" aria-hidden="true" />
+              返回首页
+            </button>
+            <div className="flex shrink-0 items-center gap-2" aria-label="ROC Platform">
+              <span className="grid size-9 place-items-center rounded-lg bg-gradient-to-br from-blue-600 to-violet-600">
+                <Zap className="size-5 text-white" aria-hidden="true" />
+              </span>
+              <span className="font-semibold">ROC Platform</span>
             </div>
           </div>
+        </header>
+      )}
+
+      <div className={embedded ? 'space-y-6' : 'mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8'}>
+        <div className="max-w-3xl">
+          <p className="text-sm font-semibold text-blue-700">设备与应用接入参考 · v1</p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">文档指南</h1>
+          <p className="mt-3 text-base leading-7 text-slate-600">
+            本页以当前后端实现为准。设备使用单车凭据上报数据，网页或业务客户端使用账户 JWT 订阅项目实时状态。
+          </p>
         </div>
-      </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* 页头 */}
-        <div className="mb-8">
-          <h1 className="text-3xl text-slate-900 mb-2">协议开放说明</h1>
-          <p className="text-slate-600">ROC平台支持多种通信协议，灵活对接各类机器人系统</p>
-        </div>
-
-        <div className="flex gap-6">
-          {/* 左侧协议列表 */}
-          <div className="w-64 flex-shrink-0">
-            <div className="bg-white rounded-xl shadow-sm p-4 sticky top-24">
-              <nav className="space-y-2">
-                <button
-                  onClick={() => setActiveProtocol('ros')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeProtocol === 'ros'
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <FileCode className="w-5 h-5" />
-                  <span>ROS 协议</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveProtocol('roc')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeProtocol === 'roc'
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <Code className="w-5 h-5" />
-                  <span>ROC 协议</span>
-                </button>
-
-                <button
-                  onClick={() => setActiveProtocol('json')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeProtocol === 'json'
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <Braces className="w-5 h-5" />
-                  <span>JSON 协议</span>
-                </button>
-              </nav>
+        <section aria-labelledby="access-flow-heading" className="grid gap-3 sm:grid-cols-3">
+          {[
+            ['01', '注册车辆', '在项目的车辆管理页创建车辆，记录车辆 UUID。'],
+            ['02', '签发凭据', '生成单车 Device token 并立即安全保存，明文不会再次展示。'],
+            ['03', '接入与订阅', '设备携带凭据上报；登录客户端以 JWT 订阅所属项目。'],
+          ].map(([step, title, description]) => (
+            <div key={step} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <span className="text-xs font-bold text-blue-700">{step}</span>
+              <h2 id={step === '01' ? 'access-flow-heading' : undefined} className="mt-2 font-semibold">{title}</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
             </div>
-          </div>
+          ))}
+        </section>
 
-          {/* 右侧协议内容 */}
-          <div className="flex-1">
-            <div className="bg-white rounded-xl shadow-sm p-8">
-              {/* 协议标题 */}
-              <div className="flex items-center gap-4 mb-6 pb-6 border-b border-slate-200">
-                <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
-                  <ProtocolIcon className="w-8 h-8 text-white" />
-                </div>
-                <div>
-                  <h2 className="text-2xl text-slate-900 mb-1">{currentProtocol.title}</h2>
-                  <p className="text-slate-600">{currentProtocol.description}</p>
-                </div>
-              </div>
+        <div className="grid min-w-0 gap-6 md:grid-cols-[14rem_minmax(0,1fr)]">
+          <nav aria-label="接入类型" className="self-start rounded-xl border border-slate-200 bg-white p-2 shadow-sm md:sticky md:top-6">
+            <div className="grid grid-cols-3 gap-2 md:grid-cols-1">
+              {([
+                ['json', Braces, 'JSON HTTP'],
+                ['roc', Code2, 'ROC 二进制'],
+                ['realtime', Radio, '实时订阅'],
+              ] as const).map(([id, Icon, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={activeProtocol === id}
+                  onClick={() => setActiveProtocol(id)}
+                  className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors md:justify-start ${activeProtocol === id ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}
+                >
+                  <Icon className="size-5" aria-hidden="true" /><span>{label}</span>
+                </button>
+              ))}
+            </div>
+          </nav>
 
-              {/* 协议内容 */}
-              <div className="prose prose-slate max-w-none">
-                <div className="whitespace-pre-wrap text-slate-700 leading-relaxed">
-                  {currentProtocol.content}
-                </div>
+          <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+            <div className="flex items-start gap-4 border-b border-slate-200 pb-6">
+              <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-600 text-white">
+                {activeProtocol === 'json' && <Braces className="size-6" />}
+                {activeProtocol === 'roc' && <Code2 className="size-6" />}
+                {activeProtocol === 'realtime' && <Radio className="size-6" />}
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-xl font-semibold">
+                  {activeProtocol === 'json' && 'JSON HTTP 接口'}
+                  {activeProtocol === 'roc' && 'ROC 二进制状态帧'}
+                  {activeProtocol === 'realtime' && 'WebSocket 实时订阅'}
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {activeProtocol === 'json' && '状态上报、控制消息和设备指令轮询。'}
+                  {activeProtocol === 'roc' && '适用于以紧凑二进制格式上报完整车辆状态。'}
+                  {activeProtocol === 'realtime' && '面向登录客户端，按项目接收已持久化的车辆事件。'}
+                </p>
               </div>
             </div>
-          </div>
+
+            {activeProtocol === 'json' && (
+              <div className="mt-6 space-y-9">
+                <section className="rounded-xl border border-blue-200 bg-blue-50/70 p-4">
+                  <div className="flex gap-3">
+                    <KeyRound className="mt-0.5 size-5 shrink-0 text-blue-700" aria-hidden="true" />
+                    <div>
+                      <h3 className="font-semibold text-blue-950">先获取单车凭据</h3>
+                      <p className="mt-1 text-sm leading-6 text-blue-950/75">
+                        以下凭据管理接口使用 <code>Authorization: Bearer &lt;ACCOUNT_JWT&gt;</code>，且仅车辆所有者或超级管理员可操作。
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-4 divide-y divide-blue-200/70 border-t border-blue-200/70">
+                    {credentialEndpoints.map((endpoint) => (
+                      <div key={`${endpoint.method}-${endpoint.path}`} className="grid gap-2 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
+                        <MethodBadge method={endpoint.method} />
+                        <div className="min-w-0"><code className="break-all text-sm">{endpoint.path}</code><p className="mt-1 text-sm text-blue-950/70">{endpoint.purpose}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <SectionTitle description="三个入口均要求 Authorization: Device &lt;DEVICE_TOKEN&gt;，token 与 robot_id 必须属于同一辆车。">设备接口</SectionTitle>
+                  <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+                    <div className="divide-y divide-slate-200">
+                      {deviceEndpoints.map((endpoint) => (
+                        <div key={endpoint.path} className="grid gap-2 p-4 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
+                          <MethodBadge method={endpoint.method} />
+                          <div className="min-w-0">
+                            <code className="break-all text-sm text-slate-950">{endpoint.path}</code>
+                            <p className="mt-1 text-sm leading-6 text-slate-600">{endpoint.purpose}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <SectionTitle description="当前接口按完整快照写入；未提供的遥测字段会使用默认值，因此设备端应发送完整字段集合。">状态请求字段</SectionTitle>
+                  <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full min-w-[42rem] text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">字段</th><th className="px-4 py-3">类型</th><th className="px-4 py-3">要求</th><th className="px-4 py-3">说明</th></tr></thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {statusFields.map(([field, type, required, description]) => <tr key={field}><td className="px-4 py-3 font-mono text-xs text-slate-950">{field}</td><td className="px-4 py-3 text-slate-600">{type}</td><td className="px-4 py-3 text-slate-600">{required}</td><td className="px-4 py-3 text-slate-600">{description}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
+                  <CodeBlock>{jsonExample}</CodeBlock>
+                </section>
+
+                <section>
+                  <SectionTitle description="HOST 为部署域名或地址。生产环境必须使用 HTTPS。">状态上报示例</SectionTitle>
+                  <CodeBlock>{curlExample}</CodeBlock>
+                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
+                    <div className="rounded-lg bg-emerald-50 p-3 text-emerald-900"><strong>200</strong><p className="mt-1">状态已持久化并接受</p></div>
+                    <div className="rounded-lg bg-amber-50 p-3 text-amber-950"><strong>400</strong><p className="mt-1">JSON、字段或数值不合法</p></div>
+                    <div className="rounded-lg bg-rose-50 p-3 text-rose-900"><strong>401</strong><p className="mt-1">凭据无效或车辆不匹配</p></div>
+                  </div>
+                </section>
+
+                <section>
+                  <SectionTitle description="command_type 必填；运动分量缺省为 0，task_params 是 JSON 字符串而不是嵌套对象。">控制指令示例</SectionTitle>
+                  <CodeBlock>{commandExample}</CodeBlock>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    车辆随后调用 <code>GET /api/protocol/pending/&lt;robot_id&gt;</code> 获取 <code>{'{ "ok": true, "robot_id": "...", "commands": [...] }'}</code>。读取会清空当前队列，需由设备自行确认执行与重试策略；服务重启也不会保留此内存队列。
+                  </p>
+                </section>
+              </div>
+            )}
+
+            {activeProtocol === 'roc' && (
+              <div className="mt-6 space-y-9">
+                <section>
+                  <SectionTitle description="所有整数和浮点数均按网络字节序（大端）编码；头部固定为 10 字节。">状态帧头</SectionTitle>
+                  <CodeBlock>{rocFrame}</CodeBlock>
+                </section>
+                <section>
+                  <SectionTitle description="float64 为 IEEE 754 双精度；robot_id 必须是与凭据匹配的车辆 UUID。">状态负载顺序</SectionTitle>
+                  <CodeBlock>{rocPayload}</CodeBlock>
+                </section>
+                <section>
+                  <SectionTitle>HTTP 传输</SectionTitle>
+                  <div className="mt-3 rounded-xl border border-slate-200 p-4 text-sm leading-6">
+                    <div className="flex flex-wrap items-center gap-3"><MethodBadge method="POST" /><code className="break-all">/api/protocol/roc</code></div>
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-slate-600">
+                      <li>请求头：<code>Authorization: Device &lt;DEVICE_TOKEN&gt;</code></li>
+                      <li>内容类型：<code>application/octet-stream</code></li>
+                      <li>成功返回 200；帧结构或消息类型错误返回 400；凭据不匹配返回 401。</li>
+                    </ul>
+                  </div>
+                </section>
+                <aside className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+                  <strong>当前实现范围：</strong><code>/api/protocol/roc</code> 只接受消息类型 <code>0x0001 STATUS_REPORT</code>。虽然序列化器预留了控制帧与心跳类型，但当前 HTTP 接口尚未开放这两类二进制消息。
+                </aside>
+              </div>
+            )}
+
+            {activeProtocol === 'realtime' && (
+              <div className="mt-6 space-y-9">
+                <section>
+                  <SectionTitle description="连接地址与当前站点同源：HTTPS 对应 wss://，HTTP 对应 ws://。">连接入口</SectionTitle>
+                  <div className="mt-3 rounded-xl border border-slate-200 p-4"><code className="text-sm">GET /ws/status</code></div>
+                  <CodeBlock>{websocketFlow}</CodeBlock>
+                </section>
+                <section>
+                  <SectionTitle description="订阅成功立即返回 snapshot，之后仅推送该项目的增量事件。">服务端消息</SectionTitle>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {[
+                      ['snapshot', 'project_id + vehicles，项目当前车辆快照'],
+                      ['vehicle_created', 'project_id + vehicle，新建车辆'],
+                      ['vehicle_updated', 'project_id + vehicle，状态或配置更新'],
+                      ['vehicle_deleted', 'project_id + vehicle_id，车辆删除'],
+                      ['error', 'code + message，鉴权、权限或格式错误'],
+                      ['pong', '对客户端 ping 的保活响应'],
+                    ].map(([type, description]) => <div key={type} className="rounded-lg bg-slate-50 p-4"><code className="text-sm font-semibold text-blue-700">{type}</code><p className="mt-1 text-sm leading-6 text-slate-600">{description}</p></div>)}
+                  </div>
+                </section>
+                <section>
+                  <SectionTitle>权限与连接约束</SectionTitle>
+                  <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+                    <li>首条客户端消息必须是 <code>authenticate</code>；5 秒内未认证会断开连接。</li>
+                    <li>普通用户只能订阅自己拥有的项目；超级管理员可以订阅任意项目。</li>
+                    <li>账户停用或项目权限被撤销后，推送前会再次校验并移除订阅。</li>
+                    <li>单条客户端消息最大 16 KiB；建议每 15 秒发送一次 <code>ping</code> 并实现指数退避重连。</li>
+                  </ul>
+                </section>
+              </div>
+            )}
+
+            <aside className="mt-8 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+              <ShieldAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+              <p><strong>安全边界：</strong>账户 JWT 与 Device token 用途不同，不得互换。平台只保存设备凭据摘要；生产环境须使用 TLS，并限制允许的 WebSocket Origin，设备接口不应以明文直接暴露到公网。</p>
+            </aside>
+          </article>
         </div>
       </div>
     </div>

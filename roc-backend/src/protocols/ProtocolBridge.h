@@ -9,7 +9,7 @@
 
 namespace roc::protocol {
 
-using StatusCallback = std::function<void(const RobotStatus &)>;
+using StatusCallback = std::function<bool(const RobotStatus &)>;
 using CommandCallback = std::function<void(const ControlCommand &)>;
 
 class ProtocolBridge {

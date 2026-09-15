@@ -232,13 +232,14 @@ Browser → Nginx (static or proxy)
 
 ```
 Robot System
-  → POST /api/protocol/status (JSON)
+  → POST /api/protocol/status (JSON + per-vehicle Device token)
     → ProtocolBridge::ingest(data, JSON)
       → JsonSerializer::deserializeStatus()
         → onStatusReport callback (registered in main.cpp)
-          → StatusWsController::broadcast(json)
-            → 遍历所有已连接 WebSocket 客户端 → 逐个 send(json)
-              → 前端 MapDetailPage WebSocket 连接收到消息
+          → VehicleStatusService validates and persists telemetry/version
+          → StatusWsController::broadcastVehicle(vehicle)
+            → 仅发送给已认证且订阅该 project_id 的连接
+              → VehicleRealtimeProvider 合并版本化事件
                 → 更新画布上车辆标记位置/状态
 ```
 
@@ -263,8 +264,8 @@ GET /api/protocol/pending/{robot_id}      → ProtocolBridge::pollCommands()
 
 ```
 App.tsx → AuthContext (JWT token / role / username → localStorage)
-  ├── / · /login · /register · /protocols          → 公开路由
-  ├── /profile · /projects · /project/:id · …      → ProtectedRoute (isLoggedIn)
+  ├── / · /login · /register · /guide              → 公开路由
+  ├── /profile · /projects · /protocols · …         → ProtectedRoute (isLoggedIn)
   └── /admin/users                                    → SuperAdminRoute (isLoggedIn + role=="super_admin")
 ```
 
@@ -287,14 +288,13 @@ Register/Login
 
 ```
 Robot reports status (via HTTP or direct protocol)
-  → ProtocolBridge::ingest()
+  → 单车 Device token 与 robot_id(UUID) 白名单校验
+    → ProtocolBridge::ingest()
     → JsonSerializer::deserializeStatus() → RobotStatus struct
       → onStatusReport callback
-        → 构造 JSON: { type, robot_id, online, cpu, memory, battery, position_*, velocity_* }
-        → StatusWsController::broadcast(json)
-          → 所有已连接 WS 客户端接收
-            → MapDetailPage: updateVehicleFromStatus()
-              → 更新 canvas 车辆标记 (位置/颜色/悬浮窗)
+        → 数据库事务更新车辆状态并递增 telemetry_version
+        → 仅向订阅车辆所属项目的已认证 WebSocket 客户端推送
+          → 前端按 version 合并事件；断线时每 10 秒 REST 轮询兜底
 ```
 
 ### 地图可视化 — 5 层 Canvas 叠加
@@ -416,8 +416,11 @@ erDiagram
 | `/api/projects/{id}` | GET | Bearer | 项目详情 |
 | `/api/projects/{id}` | PATCH | Bearer | 更新项目 |
 | `/api/projects/{id}` | DELETE | Bearer | 删除项目 |
-| `/api/projects/{id}/maps` | GET | 公开 | 项目地图列表 |
-| `/api/projects/{id}/maps/upload` | POST | Bearer | 上传地图图片 (multipart) |
+| `/api/projects/{id}/maps` | GET | Bearer | 已授权项目的地图列表 |
+| `/api/projects/{pid}/maps/{mid}` | GET | Bearer | 读取单张地图及坐标元数据 |
+| `/api/projects/{pid}/maps/{mid}/image` | GET | Bearer | 校验项目归属后读取地图图片；不提供匿名 `/static` 回退 |
+| `/api/projects/{id}/maps/upload` | POST | Bearer | 上传地图图片（JSON base64，PNG/JPEG，最大 10 MB） |
+| `/api/projects/{pid}/default-map` | PUT | Bearer | 原子设置项目默认地图 |
 | `/api/projects/{pid}/maps/{mid}` | PATCH | Bearer | 更新地图信息 |
 | `/api/projects/{pid}/maps/{mid}` | DELETE | Bearer | 删除地图 |
 
@@ -425,25 +428,30 @@ erDiagram
 
 | 端点 | Method | 认证 | 说明 |
 |---|---|---|---|
-| `/api/vehicles` | GET | Bearer | 车辆列表 |
-| `/api/vehicles` | POST | Bearer | 注册车辆 |
+| `/api/vehicles?project_id={pid}` | GET | Bearer | 按已授权项目过滤车辆；无参数时返回当前主体可见车辆 |
+| `/api/vehicles` | POST | Bearer | 注册车辆并校验项目/地图归属 |
 | `/api/vehicles/{id}` | PATCH | Bearer | 更新车辆状态/指标 |
 | `/api/vehicles/{id}` | DELETE | Bearer | 删除车辆 |
+| `/api/vehicles/{id}/device-token` | GET | Bearer | 查看设备凭据配置状态和尾号 |
+| `/api/vehicles/{id}/device-token` | POST | Bearer | 生成或轮换单车凭据；明文仅返回一次 |
+| `/api/vehicles/{id}/device-token` | DELETE | Bearer | 撤销单车凭据 |
 
 ### 协议 (Protocol)
 
 | 端点 | Method | 认证 | 说明 |
 |---|---|---|---|
-| `/api/protocol/status` | POST | 公开 | 接收机器人状态上报 (JSON) |
-| `/api/protocol/command` | POST | 公开 | 发送控制指令 (JSON) |
-| `/api/protocol/roc` | POST | 公开 | 接收 ROC 二进制协议消息 |
-| `/api/protocol/pending/{robot_id}` | GET | 公开 | Robot 轮询待执行指令 |
+| `/api/protocol/status` | POST | Device token | 接收机器人状态上报（JSON） |
+| `/api/protocol/command` | POST | Device token | 写入待执行控制指令（JSON） |
+| `/api/protocol/roc` | POST | Device token | 接收 ROC 二进制协议消息 |
+| `/api/protocol/pending/{robot_id}` | GET | Device token | Robot 轮询并取走待执行指令 |
+
+协议接口要求 `Authorization: Device <token>`，消息中的 `robot_id` 必须是该凭据对应的车辆 UUID。平台仅保存凭据 SHA-256 摘要。`DEVICE_TOKEN` 只作为迁移期开关：仅当 `DEVICE_ALLOW_SHARED_TOKEN=true` 时允许旧共享凭据，生产环境应保持关闭并启用 TLS。
 
 ### 实时通信 (WebSocket)
 
 | 端点 | 协议 | 说明 |
 |---|---|---|
-| `/ws/status` | WebSocket | 实时车辆状态推送，支持 client→server ping |
+| `/ws/status` | WebSocket | 首帧发送 `{type:"authenticate",token:"<JWT>"}`，认证后以 `{type:"subscribe",project_id:"<UUID>"}` 订阅有权限的项目；断线自动重连并由 REST 轮询兜底 |
 
 ## ROC 二进制协议
 
@@ -515,12 +523,15 @@ cp docker/compose/.env.example docker/compose/.env
 bash scripts/deploy-all-docker.sh --up
 ```
 
-默认管理员: `admin` / `[REDACTED_DEFAULT_PASSWORD]`
+全新数据库不会创建固定密码的管理员。先通过应用注册运维账号，再由数据库管理员将该账号的 `role` 更新为 `super_admin`。不要在仓库或部署脚本中保存初始管理员密码。
 
 ### 前端开发
 
 ```bash
-cd roc-frontend && npm install && npm run dev     # http://localhost:3000
+cd roc-frontend
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run dev     # http://localhost:3000
 ```
 
 ### 后端开发
@@ -528,7 +539,8 @@ cd roc-frontend && npm install && npm run dev     # http://localhost:3000
 ```bash
 cd roc-backend && mkdir build && cd build
 cmake .. && make
-BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 JWT_SECRET=my-secret ./roc-backend-server
+BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 JWT_SECRET=my-secret \
+  MAP_STORAGE_DIR=./static/maps ./roc-backend-server
 ```
 
 ## 用户角色

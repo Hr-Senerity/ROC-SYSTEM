@@ -51,6 +51,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-change_me}
       JWT_SECRET: ${JWT_SECRET:-roc-system-default-secret-change-in-production}
       JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
+      DEVICE_TOKEN: ${DEVICE_TOKEN:-}
+      DEVICE_ALLOW_SHARED_TOKEN: ${DEVICE_ALLOW_SHARED_TOKEN:-false}
+      WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
+      MAP_STORAGE_DIR: /app/static/maps
     ports:
       - "${BACKEND_DOCKER_HOST_PORT:-8080}:8080"
     volumes:

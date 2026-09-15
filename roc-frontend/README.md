@@ -1,50 +1,51 @@
+# ROC Platform frontend
 
-  # ROC Platform Frontend
+React + TypeScript frontend for the ROC robot operations workspace.
 
-  ROC平台（Robot Operation Control Platform）前端项目 - 机器人运营控制平台
+## Requirements
 
-  这是一个从 Figma 设计导出的 React + TypeScript 前端项目。原始设计文件：https://www.figma.com/design/XboBjsRliaN0X7YrnRoMYz/Login-and-Registration-Interface
+- Node.js 20
+- pnpm 10.15.1 (declared in `package.json`)
+- ROC backend reachable at `http://localhost:8080` or through `VITE_DEV_PROXY_TARGET`
 
-  ## 技术栈
+## Development
 
-  - React 18 + TypeScript
-  - Vite 6
-  - React Router
-  - Tailwind CSS
-  - Radix UI 组件库
+```bash
+pnpm install --frozen-lockfile
+pnpm dev
+```
 
-  ## 快速开始
+The development server listens on port 3000. To proxy API and WebSocket requests to another backend:
 
-  ### 安装依赖
+```bash
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:18080 pnpm dev
+```
 
-  ```bash
-  npm install
-  ```
+## Quality checks
 
-  ### 启动开发服务器
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+```
 
-  ```bash
-  npm run dev
-  ```
+The production output directory is `build/`.
 
-  开发服务器将在 http://localhost:3000 启动
+## Product structure
 
-  ### 构建生产版本
+- `/` — public product introduction; authenticated users are directed to the workspace.
+- `/login`, `/register` — authentication.
+- `/projects` — project workspace entry.
+- `/projects/:projectId/maps` — map resources and default-map selection.
+- `/projects/:projectId/vehicles` — project-scoped vehicles.
+- `/projects/:projectId/settings` — supported project settings.
+- `/projects/:projectId/maps/:mapId/monitor` — map and vehicle monitoring workspace.
+- `/profile` — account profile and password change.
+- `/admin/users` — super-administrator user management.
+- `/guide` — public device integration guide.
+- `/protocols` — authenticated guide embedded in the application workspace.
 
-  ```bash
-  npm run build
-  ```
+Vehicle state uses authenticated project-scoped WebSocket subscriptions. Events are merged by telemetry version; reconnection uses exponential backoff and project-scoped REST polling remains the fallback.
 
-  ## 项目结构
-
-  ```
-  roc-frontend/
-  ├── src/              # 源代码目录
-  │   ├── components/   # React 组件
-  │   ├── styles/       # 样式文件
-  │   └── main.tsx      # 应用入口
-  ├── index.html        # HTML 入口文件
-  ├── vite.config.ts    # Vite 配置
-  └── package.json      # 项目配置
-  ```
-  
+See [`../plan.md`](../plan.md) for the implementation plan and [`../docs/frontend/verification.md`](../docs/frontend/verification.md) for verified results and remaining release blockers.

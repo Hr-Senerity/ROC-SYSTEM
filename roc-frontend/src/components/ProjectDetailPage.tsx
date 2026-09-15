@@ -1,261 +1,162 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { useAuth, API_BASE } from '../App';
-import { ArrowLeft, Zap, FileText, Map, Activity, CheckCircle, Trash2 } from 'lucide-react';
-import { PerformanceMonitor } from './PerformanceMonitor';
+import { useEffect, useState } from 'react';
+import { CheckCircle2, Map as MapIcon, MoreHorizontal, Plus, Star, Trash2 } from 'lucide-react';
+import { Link, useParams } from 'react-router-dom';
+import { useAuth } from '../app/auth/AuthProvider';
+import { parseProjectMapList, type ProjectMap } from '../features/maps/model';
+import { useAuthenticatedMapImage } from '../features/maps/useAuthenticatedMapImage';
+import { apiRequest } from '../shared/api/client';
+import { isAbortError } from '../shared/api/errors';
+import { EmptyState } from '../shared/ui/EmptyState';
+import { ErrorState } from '../shared/ui/ErrorState';
+import { PageHeader } from '../shared/ui/PageHeader';
+import { Button } from './ui/button';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from './ui/alert-dialog';
 import { MapUploadModal } from './MapUploadModal';
 
-type TabType = 'details' | 'maps' | 'performance';
-
-interface MapData {
-  id: string;
-  name: string;
-  image_url: string;
-  is_active: boolean;
-  created_at: string;
-}
-
-interface ProjectData {
-  id: string;
-  name: string;
-  description: string;
-  status: string;
-  created_at: string;
-}
-
 export function ProjectDetailPage() {
-  const { isLoggedIn, token } = useAuth();
-  const navigate = useNavigate();
   const { projectId } = useParams();
-  const [activeTab, setActiveTab] = useState<TabType>('details');
-  const [maps, setMaps] = useState<MapData[]>([]);
-  const [projectData, setProjectData] = useState<ProjectData | null>(null);
+  const { token } = useAuth();
+  const [maps, setMaps] = useState<ProjectMap[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [error, setError] = useState('');
+  const [showUpload, setShowUpload] = useState(false);
+  const [mapToDelete, setMapToDelete] = useState<ProjectMap | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
+
+  const loadMaps = async (signal?: AbortSignal) => {
+    if (!projectId) return;
+    setLoading(true);
+    setError('');
+    try {
+      const payload = await apiRequest(`/api/projects/${projectId}/maps`, { token, signal });
+      setMaps(parseProjectMapList(payload));
+    } catch (requestError) {
+      if (!isAbortError(requestError)) setError(requestError instanceof Error ? requestError.message : '无法加载地图');
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (!isLoggedIn) { navigate('/login'); return; }
-    fetchProject();
-    fetchMaps();
-  }, [projectId]);
+    setMaps([]);
+    const controller = new AbortController();
+    void loadMaps(controller.signal);
+    return () => controller.abort();
+  }, [projectId, token]);
 
-  const fetchProject = async () => {
+  const deleteMap = async () => {
+    if (!projectId || !mapToDelete || deleting) return;
+    setDeleting(true);
+    setError('');
     try {
-      const resp = await fetch(`${API_BASE}/api/projects/${projectId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      await apiRequest(`/api/projects/${projectId}/maps/${mapToDelete.id}`, { method: 'DELETE', token });
+      setMaps((current) => current.filter((map) => map.id !== mapToDelete.id));
+      setMapToDelete(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '删除地图失败');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const setDefaultMap = async (map: ProjectMap) => {
+    if (!projectId || settingDefaultId) return;
+    setSettingDefaultId(map.id);
+    setError('');
+    try {
+      await apiRequest(`/api/projects/${projectId}/default-map`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ map_id: map.id }),
       });
-      const data = await resp.json();
-      if (data.ok) setProjectData(data.project);
-    } catch { /* ignore */ }
-  };
-
-  const fetchMaps = async () => {
-    try {
-      const resp = await fetch(`${API_BASE}/api/projects/${projectId}/maps`);
-      const data = await resp.json();
-      if (data.ok) setMaps(data.maps || []);
-    } catch { /* ignore */ }
-    setLoading(false);
-  };
-
-  if (!isLoggedIn) return null;
-
-  const handleMapClick = (id: string) => {
-    setMaps(maps.map(m => ({ ...m, is_active: m.id === id })));
-    navigate(`/project/${projectId}/map/${id}`);
-  };
-
-  const handleMapActivate = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    setMaps(maps.map(m => ({ ...m, is_active: m.id === id })));
-  };
-
-  const handleMapDelete = async (e: React.MouseEvent, mapId: string, mapName: string) => {
-    e.stopPropagation();
-    if (!window.confirm(`确定要删除地图「${mapName}」吗？此操作不可撤销。`)) return;
-    try {
-      const resp = await fetch(`${API_BASE}/api/projects/${projectId}/maps/${mapId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        setMaps(maps.filter(m => m.id !== mapId));
-      } else {
-        alert(data.message || '删除失败');
-      }
-    } catch {
-      alert('网络错误，删除失败');
+      setMaps((current) => current.map((item) => ({ ...item, isDefault: item.id === map.id })));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '设置默认地图失败');
+    } finally {
+      setSettingDefaultId(null);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/projects')}
-                className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                返回项目列表
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-                <Zap className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-xl text-slate-900">ROC平台</span>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex gap-6">
-          <div className="w-64 flex-shrink-0">
-            <div className="bg-white rounded-xl shadow-sm p-4 sticky top-24">
-              <nav className="space-y-2">
-                <button onClick={() => setActiveTab('details')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeTab === 'details' ? 'bg-blue-50 text-blue-600' : 'text-slate-700 hover:bg-slate-50'
-                  }`}>
-                  <FileText className="w-5 h-5" />
-                  <span>项目详情</span>
-                </button>
-                <button onClick={() => setActiveTab('maps')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeTab === 'maps' ? 'bg-blue-50 text-blue-600' : 'text-slate-700 hover:bg-slate-50'
-                  }`}>
-                  <Map className="w-5 h-5" />
-                  <span>我的地图</span>
-                </button>
-                <button onClick={() => setActiveTab('performance')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    activeTab === 'performance' ? 'bg-blue-50 text-blue-600' : 'text-slate-700 hover:bg-slate-50'
-                  }`}>
-                  <Activity className="w-5 h-5" />
-                  <span>性能监控</span>
-                </button>
-              </nav>
-            </div>
-          </div>
-
-          <div className="flex-1">
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              {activeTab === 'details' && (
-                <div>
-                  <h2 className="text-2xl text-slate-900 mb-6">项目详情</h2>
-                  {loading ? <p className="text-slate-400">加载中...</p> : projectData ? (
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-slate-600 mb-1">项目名称</label>
-                        <p className="text-slate-900">{projectData.name}</p>
-                      </div>
-                      <div>
-                        <label className="block text-slate-600 mb-1">项目描述</label>
-                        <p className="text-slate-900">{projectData.description || '暂无描述'}</p>
-                      </div>
-                      <div>
-                        <label className="block text-slate-600 mb-1">创建时间</label>
-                        <p className="text-slate-900">{new Date(projectData.created_at).toLocaleDateString('zh-CN')}</p>
-                      </div>
-                      <div>
-                        <label className="block text-slate-600 mb-1">项目状态</label>
-                        <span className="inline-flex items-center px-3 py-1 rounded-full bg-green-100 text-green-700">
-                          运行中
-                        </span>
-                      </div>
-                    </div>
-                  ) : <p className="text-slate-400">项目不存在</p>}
-                </div>
-              )}
-
-              {activeTab === 'maps' && (
-                <div>
-                  <h2 className="text-2xl text-slate-900 mb-6">我的地图</h2>
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {maps.map((m) => (
-                      <div key={m.id}
-                        className={`border-2 rounded-lg p-4 cursor-pointer transition-all relative group ${
-                          m.is_active
-                            ? 'border-blue-500 shadow-lg shadow-blue-200 ring-2 ring-blue-300'
-                            : 'border-slate-200 hover:border-blue-400'
-                        }`}>
-                        {m.is_active && (
-                          <div className="absolute top-2 left-2 bg-blue-500 text-white px-2 py-1 rounded-full flex items-center gap-1 z-10">
-                            <CheckCircle className="w-3 h-3" />
-                            <span className="text-xs">使用中</span>
-                          </div>
-                        )}
-                        <button
-                          onClick={(e) => handleMapDelete(e, m.id, m.name)}
-                          className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-50 transition-all z-10"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </button>
-                        <div onClick={() => handleMapClick(m.id)}
-                          className="aspect-video bg-slate-100 rounded-lg mb-3 flex items-center justify-center overflow-hidden hover:bg-slate-200 transition-colors relative">
-                          {m.image_url ? (
-                            <img src={m.image_url} alt={m.name} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="relative w-full h-full" style={{
-                              backgroundImage: 'linear-gradient(rgba(148, 163, 184, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.2) 1px, transparent 1px)',
-                              backgroundSize: '20px 20px'
-                            }}>
-                              <Map className="w-12 h-12 text-slate-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-                              <div className="absolute bottom-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded opacity-0 hover:opacity-100 transition-opacity">
-                                点击放大
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <h3 className="text-slate-900 mb-1">{m.name}</h3>
-                            <p className="text-slate-600 text-sm">更新于 {new Date(m.created_at).toLocaleDateString('zh-CN')}</p>
-                          </div>
-                          <button onClick={(e) => handleMapActivate(e, m.id)}
-                            className={`px-3 py-1 rounded-lg text-xs transition-colors ${
-                              m.is_active ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600'
-                            }`}>
-                            {m.is_active ? '使用中' : '启用'}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    <div
-                      onClick={() => setShowUploadModal(true)}
-                      className="border-2 border-dashed border-slate-300 rounded-lg p-4 flex items-center justify-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-colors">
-                      <div className="text-center">
-                        <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                          <Map className="w-6 h-6 text-slate-400" />
-                        </div>
-                        <p className="text-slate-600">新建地图</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'performance' && (
-                <PerformanceMonitor projectId={projectId || ''} />
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-      {showUploadModal && (
-        <MapUploadModal
-          projectId={projectId || ''}
-          token={token || ''}
-          apiBase={API_BASE}
-          onClose={() => setShowUploadModal(false)}
-          onUploaded={fetchMaps}
-        />
+    <section className="space-y-5">
+      <PageHeader
+        title="地图"
+        description="管理项目地图并进入实时监控。默认地图仅影响控制台的默认展示。"
+        actions={<Button onClick={() => setShowUpload(true)}><Plus />上传地图</Button>}
+      />
+      {error && <ErrorState message={error} onRetry={() => void loadMaps()} />}
+      {loading && <div className="rounded-lg border bg-white p-8 text-center text-slate-500">正在加载地图…</div>}
+      {!loading && !error && maps.length === 0 && (
+        <EmptyState title="还没有地图" description="上传第一张地图后即可配置路网并查看车辆位置。" action={<Button onClick={() => setShowUpload(true)}><Plus />上传地图</Button>} />
       )}
-    </div>
+      {!loading && maps.length > 0 && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
+          {maps.map((map) => (
+            <article key={map.id} className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <Link to={`/projects/${projectId}/maps/${map.id}/monitor`} className="relative block aspect-video bg-slate-100">
+                <MapThumbnail map={map} projectId={projectId} token={token} />
+                {map.isDefault && <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-blue-600 px-2 py-1 text-xs font-medium text-white"><CheckCircle2 className="size-3.5" />默认地图</span>}
+              </Link>
+              <div className="flex items-start justify-between gap-3 p-4">
+                <div className="min-w-0">
+                  <Link to={`/projects/${projectId}/maps/${map.id}/monitor`} className="block truncate font-semibold text-slate-950 hover:text-blue-700 hover:underline">{map.name}</Link>
+                  <p className="mt-1 text-xs text-slate-500">上传于 {new Date(map.createdAt).toLocaleDateString('zh-CN')}</p>
+                </div>
+                <details className="relative shrink-0">
+                  <summary aria-label={`打开 ${map.name} 操作菜单`} className="grid size-8 cursor-pointer list-none place-items-center rounded-md text-slate-500 hover:bg-slate-100"><MoreHorizontal className="size-4" /></summary>
+                  <div className="absolute right-0 z-20 mt-1 w-36 rounded-md border bg-white p-1 shadow-lg">
+                    {!map.isDefault && <button type="button" disabled={Boolean(settingDefaultId)} onClick={() => void setDefaultMap(map)} className="flex h-9 w-full items-center gap-2 rounded px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"><Star className="size-4" />{settingDefaultId === map.id ? '设置中…' : '设为默认'}</button>}
+                    <button type="button" onClick={() => setMapToDelete(map)} className="flex h-9 w-full items-center gap-2 rounded px-3 text-sm text-red-700 hover:bg-red-50"><Trash2 className="size-4" />删除地图</button>
+                  </div>
+                </details>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {showUpload && <MapUploadModal projectId={projectId || ''} token={token || ''} onClose={() => setShowUpload(false)} onUploaded={() => void loadMaps()} />}
+
+      <AlertDialog open={Boolean(mapToDelete)} onOpenChange={(open) => { if (!open && !deleting) setMapToDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除地图“{mapToDelete?.name}”？</AlertDialogTitle>
+            <AlertDialogDescription>地图记录和上传文件将被删除。若车辆已绑定该地图，服务端会拒绝删除并提示先解除绑定。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={deleting} onClick={(event) => { event.preventDefault(); void deleteMap(); }} className="bg-red-700 hover:bg-red-800">{deleting ? '删除中…' : '删除地图'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
+function MapThumbnail({
+  map,
+  projectId,
+  token,
+}: {
+  map: ProjectMap;
+  projectId: string | undefined;
+  token: string | null;
+}) {
+  const image = useAuthenticatedMapImage(projectId, map.id, token, Boolean(map.imageUrl));
+  if (image.src) {
+    return <img src={image.src} alt={`${map.name} 缩略图`} className="h-full w-full object-contain" />;
+  }
+  if (image.loading) {
+    return <span className="grid h-full place-items-center text-sm text-slate-400">正在加载缩略图…</span>;
+  }
+  return (
+    <span className="grid h-full place-items-center text-slate-400" title={image.error || undefined}>
+      <MapIcon className="size-10" aria-hidden="true" />
+      <span className="sr-only">{image.error || '未上传地图图片'}</span>
+    </span>
   );
 }

@@ -5,6 +5,11 @@
 -- 创建扩展
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 设置时区
 SET timezone = 'Asia/Shanghai';
 
@@ -82,17 +87,25 @@ CREATE TABLE IF NOT EXISTS maps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_maps_project ON maps(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_maps_default_per_project
+  ON maps(project_id) WHERE is_active = true;
 
 -- 地图坐标系与路网数据 (Phase 4 P1)
 ALTER TABLE maps ADD COLUMN IF NOT EXISTS coordinate_origin_x DOUBLE PRECISION DEFAULT 0;
 ALTER TABLE maps ADD COLUMN IF NOT EXISTS coordinate_origin_y DOUBLE PRECISION DEFAULT 0;
 ALTER TABLE maps ADD COLUMN IF NOT EXISTS road_network JSONB;
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS coordinate_mode VARCHAR(32) NOT NULL DEFAULT 'legacy-normalized';
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS image_width INTEGER;
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS image_height INTEGER;
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS resolution DOUBLE PRECISION;
+ALTER TABLE maps ADD COLUMN IF NOT EXISTS origin_theta DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 -- 车辆/机器人表
 CREATE TABLE IF NOT EXISTS vehicles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  map_id UUID REFERENCES maps(id) ON DELETE RESTRICT,
   name VARCHAR(64) NOT NULL,
   ip VARCHAR(45) NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline', 'error')),
@@ -107,12 +120,40 @@ CREATE TABLE IF NOT EXISTS vehicles (
   velocity_angular DOUBLE PRECISION DEFAULT 0,
   delivery_path JSONB,
   last_heartbeat TIMESTAMPTZ,
+  telemetry_version BIGINT NOT NULL DEFAULT 0,
+  received_at TIMESTAMPTZ,
+  device_token_hash VARCHAR(64),
+  device_token_hint VARCHAR(12),
+  device_enabled BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_vehicles_user ON vehicles(user_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_project ON vehicles(project_id);
+CREATE INDEX IF NOT EXISTS idx_vehicles_map ON vehicles(map_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_status ON vehicles(status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicles_device_token_hash
+  ON vehicles(device_token_hash)
+  WHERE device_token_hash IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION enforce_vehicle_map_project()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.project_id IS NULL THEN
+    NEW.map_id := NULL;
+  ELSIF NEW.map_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM maps WHERE id = NEW.map_id AND project_id = NEW.project_id
+  ) THEN
+    RAISE EXCEPTION 'vehicle map must belong to the same project';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_vehicle_map_project ON vehicles;
+CREATE TRIGGER trg_vehicle_map_project
+BEFORE INSERT OR UPDATE OF project_id, map_id ON vehicles
+FOR EACH ROW EXECUTE FUNCTION enforce_vehicle_map_project();
 
 -- ============================================================
 -- P2: 机器人日志（最低优先级 — 暂不创建表, 保留 DDL 供后续使用）
@@ -143,16 +184,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at);
 
--- ============================================================
--- 初始数据: 默认超级管理员 (密码: [REDACTED_DEFAULT_PASSWORD], 首次登录后需修改)
--- ============================================================
--- SHA-256 hash of '[REDACTED_DEFAULT_PASSWORD]' + salt '[REDACTED_DEFAULT_SALT]' = '[REDACTED_DEFAULT_PASSWORD][REDACTED_DEFAULT_SALT]'
-INSERT INTO users (username, email, password_hash, salt, role, status)
-VALUES (
-  'admin',
-  'operator@example.invalid',
-  '[REDACTED_PASSWORD_HASH]',
-  '[REDACTED_DEFAULT_SALT]',
-  'super_admin',
-  'active'
-) ON CONFLICT (username) DO NOTHING;
+-- No fixed administrator account is created. Register the intended operator
+-- through the application, then promote that exact account during deployment:
+-- UPDATE users SET role = 'super_admin' WHERE username = '<operator>';

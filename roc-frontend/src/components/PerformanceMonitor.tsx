@@ -1,323 +1,287 @@
-import { useState, useEffect } from 'react';
-import { Plus, Trash2, Activity, Circle, ChevronDown, ChevronUp, Server } from 'lucide-react';
-import type { Robot, LogEntry } from '../types/robot';
-import { useAuth, API_BASE } from '../App';
+import { useMemo, useState } from 'react';
+import { Battery, Check, Copy, Cpu, Gauge, KeyRound, MapPinOff, MemoryStick, Plus, Radio, Search, Trash2, Truck } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '../app/auth/AuthProvider';
+import { useProjectVehicles } from '../app/realtime/VehicleRealtimeProvider';
+import { parseVehicle, type Vehicle, type VehicleStatus } from '../features/vehicles/model';
+import { apiRequest } from '../shared/api/client';
+import { EmptyState } from '../shared/ui/EmptyState';
+import { ErrorState } from '../shared/ui/ErrorState';
+import { PageHeader } from '../shared/ui/PageHeader';
+import { StatusBadge } from '../shared/ui/StatusBadge';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from './ui/alert-dialog';
+import { Button } from './ui/button';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from './ui/dialog';
+import { Input } from './ui/input';
 
 interface PerformanceMonitorProps {
   projectId: string;
 }
 
+const statusText: Record<VehicleStatus, string> = {
+  online: '在线',
+  offline: '离线',
+  error: '异常',
+};
+
+interface DeviceCredentialStatus {
+  configured?: boolean;
+  enabled?: boolean;
+  token_hint?: string | null;
+  device_token?: string;
+}
+
+function metric(value: number): string {
+  return `${Math.round(value)}%`;
+}
+
 export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
   const { token } = useAuth();
-  const [robots, setRobots] = useState<Robot[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { vehicles, loading, error, connectionState, refresh, upsert, remove } = useProjectVehicles(projectId);
+  const [actionError, setActionError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [name, setName] = useState('');
+  const [ip, setIp] = useState('');
+  const [formError, setFormError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [credentialVehicle, setCredentialVehicle] = useState<Vehicle | null>(null);
+  const [credentialStatus, setCredentialStatus] = useState<DeviceCredentialStatus | null>(null);
+  const [credentialLoading, setCredentialLoading] = useState(false);
+  const [credentialError, setCredentialError] = useState('');
+  const [copied, setCopied] = useState(false);
+  const query = searchParams.get('q') || '';
+  const status = searchParams.get('status') || 'all';
 
-  const [expandedRobot, setExpandedRobot] = useState<string | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [newRobotName, setNewRobotName] = useState('');
-  const [newRobotIp, setNewRobotIp] = useState('');
+  const filtered = useMemo(() => vehicles.filter((vehicle) => {
+    const matchesQuery = `${vehicle.name} ${vehicle.ip}`.toLowerCase().includes(query.toLowerCase());
+    return matchesQuery && (status === 'all' || vehicle.status === status);
+  }), [query, status, vehicles]);
 
-  const fetchVehicles = async () => {
-    try {
-      const resp = await fetch(`${API_BASE}/api/vehicles`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) setRobots(data.vehicles || []);
-    } catch { /* ignore */ }
-    setLoading(false);
+  const updateParam = (key: string, value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (!value || value === 'all') next.delete(key);
+    else next.set(key, value);
+    setSearchParams(next, { replace: true });
   };
 
-  useEffect(() => { fetchVehicles(); }, []);
-
-  const handleAddRobot = async () => {
-    if (!newRobotName.trim() || !newRobotIp.trim()) {
-      alert('请填写机器人名称和IP地址');
+  const createVehicle = async () => {
+    if (!name.trim() || !ip.trim()) {
+      setFormError('请填写车辆名称和 IP 地址');
       return;
     }
-
-    const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-    if (!ipPattern.test(newRobotIp)) {
-      alert('请输入有效的IP地址');
+    if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip.trim()) ||
+        ip.trim().split('.').some((part) => Number(part) > 255)) {
+      setFormError('请输入有效的 IPv4 地址');
       return;
     }
-
+    setSubmitting(true);
+    setFormError('');
     try {
-      const resp = await fetch(`${API_BASE}/api/vehicles`, {
+      const payload = await apiRequest<{ vehicle?: unknown }>('/api/vehicles', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ name: newRobotName, ip: newRobotIp, project_id: projectId }),
+        token,
+        body: JSON.stringify({ name: name.trim(), ip: ip.trim(), project_id: projectId }),
       });
-      const data = await resp.json();
-      if (data.ok) {
-        setRobots([...robots, data.vehicle]);
-        setNewRobotName('');
-        setNewRobotIp('');
-        setShowAddModal(false);
-      } else {
-        alert(data.message || '添加失败');
-      }
-    } catch { alert('网络错误'); }
+      if (!payload.vehicle) throw new Error('服务端未返回车辆数据');
+      upsert(parseVehicle(payload.vehicle));
+      setName('');
+      setIp('');
+      setShowCreate(false);
+    } catch (requestError) {
+      setFormError(requestError instanceof Error ? requestError.message : '添加车辆失败');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleDeleteRobot = async (id: string) => {
-    if (!window.confirm('确定要删除此机器人吗？')) return;
+  const deleteVehicle = async () => {
+    if (!vehicleToDelete || deleting) return;
+    setDeleting(true);
     try {
-      const resp = await fetch(`${API_BASE}/api/vehicles/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        setRobots(robots.filter(r => r.id !== id));
-        if (expandedRobot === id) setExpandedRobot(null);
-      } else {
-        alert(data.message || '删除失败');
-      }
-    } catch { alert('网络错误'); }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'online':
-        return 'text-green-500';
-      case 'offline':
-        return 'text-slate-400';
-      case 'error':
-        return 'text-red-500';
-      default:
-        return 'text-slate-400';
+      await apiRequest(`/api/vehicles/${vehicleToDelete.id}`, { method: 'DELETE', token });
+      remove(vehicleToDelete.id);
+      setVehicleToDelete(null);
+    } catch (requestError) {
+      setActionError(requestError instanceof Error ? requestError.message : '删除车辆失败');
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'online':
-        return '在线';
-      case 'offline':
-        return '离线';
-      case 'error':
-        return '异常';
-      default:
-        return '未知';
+  const openCredential = async (vehicle: Vehicle) => {
+    setCredentialVehicle(vehicle);
+    setCredentialStatus(null);
+    setCredentialError('');
+    setCopied(false);
+    setCredentialLoading(true);
+    try {
+      setCredentialStatus(await apiRequest<DeviceCredentialStatus>(`/api/vehicles/${vehicle.id}/device-token`, { token }));
+    } catch (requestError) {
+      setCredentialError(requestError instanceof Error ? requestError.message : '无法读取设备凭据状态');
+    } finally {
+      setCredentialLoading(false);
     }
   };
 
-  const getLogLevelColor = (level: string) => {
-    switch (level) {
-      case 'info':
-        return 'text-blue-600 bg-blue-50';
-      case 'warning':
-        return 'text-orange-600 bg-orange-50';
-      case 'error':
-        return 'text-red-600 bg-red-50';
-      default:
-        return 'text-slate-600 bg-slate-50';
+  const issueCredential = async () => {
+    if (!credentialVehicle || credentialLoading) return;
+    setCredentialLoading(true);
+    setCredentialError('');
+    setCopied(false);
+    try {
+      setCredentialStatus(await apiRequest<DeviceCredentialStatus>(`/api/vehicles/${credentialVehicle.id}/device-token`, { method: 'POST', token }));
+    } catch (requestError) {
+      setCredentialError(requestError instanceof Error ? requestError.message : '生成设备凭据失败');
+    } finally {
+      setCredentialLoading(false);
     }
   };
 
-  const getMetricColor = (value: number, type: 'cpu' | 'memory' | 'battery' | 'confidence') => {
-    if (type === 'battery') {
-      if (value < 20) return 'text-red-600';
-      if (value < 50) return 'text-orange-600';
-      return 'text-green-600';
-    } else if (type === 'confidence') {
-      if (value < 50) return 'text-red-600';
-      if (value < 80) return 'text-orange-600';
-      return 'text-green-600';
-    } else {
-      if (value > 80) return 'text-red-600';
-      if (value > 60) return 'text-orange-600';
-      return 'text-green-600';
+  const revokeCredential = async () => {
+    if (!credentialVehicle || credentialLoading) return;
+    setCredentialLoading(true);
+    setCredentialError('');
+    try {
+      await apiRequest(`/api/vehicles/${credentialVehicle.id}/device-token`, { method: 'DELETE', token });
+      setCredentialStatus({ configured: false, enabled: false, token_hint: null });
+      setCopied(false);
+    } catch (requestError) {
+      setCredentialError(requestError instanceof Error ? requestError.message : '撤销设备凭据失败');
+    } finally {
+      setCredentialLoading(false);
+    }
+  };
+
+  const copyCredential = async () => {
+    if (!credentialStatus?.device_token) return;
+    try {
+      await navigator.clipboard.writeText(credentialStatus.device_token);
+      setCopied(true);
+    } catch {
+      setCredentialError('复制失败，请手动选择凭据文本');
     }
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl text-slate-900">性能监控</h2>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          添加机器人
-        </button>
+    <section className="space-y-5">
+      <PageHeader
+        title="车辆"
+        description="查看本项目车辆状态、性能快照与地图绑定。"
+        actions={<><span className={`inline-flex h-9 items-center gap-2 rounded-full border px-3 text-xs font-medium ${connectionState === 'live' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : connectionState === 'connecting' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}><Radio className="size-3.5" />{connectionState === 'live' ? '实时连接' : connectionState === 'connecting' ? '正在连接' : connectionState === 'offline' ? '实时服务离线' : '轮询保障'}</span><Button onClick={() => setShowCreate(true)}><Plus />添加车辆</Button></>}
+      />
+
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row">
+        <label className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" />
+          <span className="sr-only">搜索车辆</span>
+          <Input value={query} onChange={(event) => updateParam('q', event.target.value)} className="pl-9" placeholder="按名称或 IP 搜索" />
+        </label>
+        <label>
+          <span className="sr-only">状态筛选</span>
+          <select value={status} onChange={(event) => updateParam('status', event.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm">
+            <option value="all">全部状态</option>
+            <option value="online">在线</option>
+            <option value="offline">离线</option>
+            <option value="error">异常</option>
+          </select>
+        </label>
       </div>
 
-      {/* 机器人列表 */}
-      <div className="space-y-4">
-        {robots.map((robot) => (
-          <div key={robot.id} className="border border-slate-200 rounded-lg overflow-hidden">
-            {/* 机器人概览 */}
-            <div className="p-4 bg-white hover:bg-slate-50 transition-colors">
-              <div className="flex items-center gap-4">
-                {/* 状态指示器 */}
-                <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
-                    <Server className="w-6 h-6 text-white" />
-                  </div>
-                </div>
+      {(error || actionError) && <ErrorState message={actionError || error} onRetry={() => { setActionError(''); void refresh(); }} />}
+      {loading && <div className="rounded-lg border bg-white p-8 text-center text-slate-500">正在加载车辆…</div>}
+      {!loading && !error && vehicles.length === 0 && (
+        <EmptyState title="项目中还没有车辆" description="添加车辆后，可在这里查看状态并绑定项目地图。" action={<Button onClick={() => setShowCreate(true)}><Plus />添加第一辆车</Button>} />
+      )}
+      {!loading && !error && vehicles.length > 0 && filtered.length === 0 && (
+        <EmptyState title="没有匹配的车辆" description="调整搜索词或状态筛选后重试。" />
+      )}
 
-                {/* 机器人信息 */}
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
-                    <h3 className="text-lg text-slate-900">{robot.name}</h3>
-                    <div className="flex items-center gap-1">
-                      <Circle className={`w-3 h-3 fill-current ${getStatusColor(robot.status)}`} />
-                      <span className={`${getStatusColor(robot.status)}`}>
-                        {getStatusText(robot.status)}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-slate-600">IP: {robot.ip}</p>
-                </div>
-
-                {/* 性能指标 */}
-                <div className="flex gap-4">
-                  <div className="text-center">
-                    <div className={`text-2xl mb-1 ${getMetricColor(robot.cpu, 'cpu')}`}>
-                      {robot.cpu}%
-                    </div>
-                    <div className="text-slate-500">CPU</div>
-                  </div>
-                  <div className="text-center">
-                    <div className={`text-2xl mb-1 ${getMetricColor(robot.memory, 'memory')}`}>
-                      {robot.memory}%
-                    </div>
-                    <div className="text-slate-500">内存</div>
-                  </div>
-                  <div className="text-center">
-                    <div className={`text-2xl mb-1 ${getMetricColor(robot.battery, 'battery')}`}>
-                      {robot.battery}%
-                    </div>
-                    <div className="text-slate-500">电量</div>
-                  </div>
-                  <div className="text-center">
-                    <div className={`text-2xl mb-1 ${getMetricColor(robot.localizationConfidence, 'confidence')}`}>
-                      {robot.localizationConfidence}%
-                    </div>
-                    <div className="text-slate-500">定位</div>
-                  </div>
-                </div>
-
-                {/* 操作按钮 */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setExpandedRobot(expandedRobot === robot.id ? null : robot.id)}
-                    className="p-2 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    {expandedRobot === robot.id ? (
-                      <ChevronUp className="w-5 h-5 text-slate-600" />
-                    ) : (
-                      <ChevronDown className="w-5 h-5 text-slate-600" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => handleDeleteRobot(robot.id)}
-                    className="p-2 hover:bg-red-50 rounded-lg transition-colors"
-                  >
-                    <Trash2 className="w-5 h-5 text-red-500" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 日志详情（展开时显示） */}
-            {expandedRobot === robot.id && (
-              <div className="border-t border-slate-200 bg-slate-50 p-4">
-                <h4 className="text-slate-900 mb-3 flex items-center gap-2">
-                  <Activity className="w-5 h-5" />
-                  运行日志
-                </h4>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {(robot.logs || []).map((log) => (
-                    <div
-                      key={log.id}
-                      className="bg-white rounded-lg p-3 flex items-start gap-3"
-                    >
-                      <span
-                        className={`px-2 py-1 rounded text-xs uppercase ${getLogLevelColor(
-                          log.level
-                        )}`}
-                      >
-                        {log.level}
-                      </span>
-                      <div className="flex-1">
-                        <p className="text-slate-900">{log.message}</p>
-                        <p className="text-slate-500 mt-1">{log.timestamp}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+      {!loading && filtered.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="hidden grid-cols-[minmax(180px,1.4fr)_130px_repeat(4,minmax(82px,.55fr))_92px] gap-3 border-b bg-slate-50 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-500 lg:grid">
+            <span>车辆</span><span>状态</span><span>CPU</span><span>内存</span><span>电量</span><span>定位</span><span>操作</span>
           </div>
-        ))}
-
-        {robots.length === 0 && (
-          <div className="text-center py-12 text-slate-500">
-            <Server className="w-16 h-16 mx-auto mb-4 text-slate-300" />
-            <p>暂无机器人，点击"添加机器人"开始</p>
-          </div>
-        )}
-      </div>
-
-      {/* 添加机器人弹窗 */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-            <h2 className="text-2xl text-slate-900 mb-6">添加机器人</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-slate-700 mb-2">机器人名称</label>
-                <input
-                  type="text"
-                  value={newRobotName}
-                  onChange={(e) => setNewRobotName(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例如: 机器人-04"
-                  autoFocus
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 mb-2">IP地址</label>
-                <input
-                  type="text"
-                  value={newRobotIp}
-                  onChange={(e) => setNewRobotIp(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例如: 192.168.1.104"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowAddModal(false);
-                  setNewRobotName('');
-                  setNewRobotIp('');
-                }}
-                className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleAddRobot}
-                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                添加
-              </button>
-            </div>
-          </div>
+          <ul className="divide-y divide-slate-200">
+            {filtered.map((vehicle) => (
+              <li key={vehicle.id} className="grid gap-4 p-4 lg:grid-cols-[minmax(180px,1.4fr)_130px_repeat(4,minmax(82px,.55fr))_92px] lg:items-center lg:gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-md bg-blue-50 text-blue-700"><Truck className="size-5" /></span>
+                  <div className="min-w-0"><p className="truncate font-medium text-slate-950">{vehicle.name}</p><p className="truncate text-xs text-slate-500">{vehicle.ip}</p></div>
+                </div>
+                <div><StatusBadge status={vehicle.status} label={statusText[vehicle.status]} /></div>
+                <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:contents">
+                  <span className="flex items-center gap-1.5 text-slate-700"><Cpu className="size-4 text-slate-400 lg:hidden" />{metric(vehicle.cpu)}</span>
+                  <span className="flex items-center gap-1.5 text-slate-700"><MemoryStick className="size-4 text-slate-400 lg:hidden" />{metric(vehicle.memory)}</span>
+                  <span className="flex items-center gap-1.5 text-slate-700"><Battery className="size-4 text-slate-400 lg:hidden" />{metric(vehicle.battery)}</span>
+                  <span className="flex items-center gap-1.5 text-slate-700"><Gauge className="size-4 text-slate-400 lg:hidden" />{metric(vehicle.localizationConfidence)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 lg:contents">
+                  {!vehicle.mapId && <span className="flex items-center gap-1 text-xs text-amber-700 lg:col-start-1 lg:row-start-2"><MapPinOff className="size-3.5" />未绑定地图</span>}
+                  <div className="flex items-center lg:col-start-7 lg:row-start-1">
+                    <Button variant="ghost" size="icon" aria-label={`管理 ${vehicle.name} 的设备凭据`} onClick={() => void openCredential(vehicle)} className="text-blue-700"><KeyRound /></Button>
+                    <Button variant="ghost" size="icon" aria-label={`删除 ${vehicle.name}`} onClick={() => setVehicleToDelete(vehicle)} className="text-red-700"><Trash2 /></Button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-    </div>
+
+      <Dialog open={showCreate} onOpenChange={(open) => { if (!submitting) { setShowCreate(open); setFormError(''); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>添加车辆</DialogTitle><DialogDescription>车辆会归属当前项目，之后可绑定到该项目的一张地图。</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            {formError && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{formError}</p>}
+            <label className="block space-y-1.5"><span className="text-sm font-medium">车辆名称</span><Input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
+            <label className="block space-y-1.5"><span className="text-sm font-medium">IPv4 地址</span><Input value={ip} onChange={(event) => setIp(event.target.value)} placeholder="192.168.1.10" /></label>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setShowCreate(false)} disabled={submitting}>取消</Button><Button onClick={() => void createVehicle()} disabled={submitting}>{submitting ? '添加中…' : '添加车辆'}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(credentialVehicle)} onOpenChange={(open) => { if (!open && !credentialLoading) { setCredentialVehicle(null); setCredentialStatus(null); setCredentialError(''); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>设备接入凭据</DialogTitle><DialogDescription>为“{credentialVehicle?.name}”生成独立凭据。设备上报时必须同时使用该车辆 ID，凭据仅在生成后显示一次。</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            {credentialError && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{credentialError}</p>}
+            {credentialLoading && !credentialStatus ? <p className="text-sm text-slate-500">正在读取凭据状态…</p> : (
+              <>
+                <dl className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2">
+                  <div><dt className="text-xs text-slate-500">车辆 ID</dt><dd className="mt-1 break-all font-mono text-xs text-slate-800">{credentialVehicle?.id}</dd></div>
+                  <div><dt className="text-xs text-slate-500">凭据状态</dt><dd className={`mt-1 font-medium ${credentialStatus?.enabled ? 'text-emerald-700' : 'text-slate-600'}`}>{credentialStatus?.enabled ? `已启用 · 尾号 ${credentialStatus.token_hint || '未知'}` : '未启用'}</dd></div>
+                </dl>
+                {credentialStatus?.device_token && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm font-medium text-amber-950">请立即保存，关闭后无法再次查看</p>
+                    <div className="mt-3 flex items-center gap-2"><code className="min-w-0 flex-1 select-all overflow-x-auto rounded-md border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900">{credentialStatus.device_token}</code><Button variant="outline" size="icon" onClick={() => void copyCredential()} aria-label="复制设备凭据">{copied ? <Check /> : <Copy />}</Button></div>
+                  </div>
+                )}
+                {credentialStatus?.configured && !credentialStatus.device_token && <p className="rounded-md bg-blue-50 p-3 text-sm text-blue-800">平台不保存明文凭据。如设备端已经遗失，请生成新凭据并同步更新设备配置。</p>}
+              </>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button variant="outline" onClick={() => void revokeCredential()} disabled={credentialLoading || !credentialStatus?.configured} className="text-red-700">撤销凭据</Button>
+            <Button onClick={() => void issueCredential()} disabled={credentialLoading}>{credentialLoading ? '处理中…' : credentialStatus?.configured ? '轮换凭据' : '生成凭据'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={Boolean(vehicleToDelete)} onOpenChange={(open) => { if (!open && !deleting) setVehicleToDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>删除车辆“{vehicleToDelete?.name}”？</AlertDialogTitle><AlertDialogDescription>该操作会移除车辆及其当前状态记录，无法撤销。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={(event) => { event.preventDefault(); void deleteVehicle(); }} className="bg-red-700 hover:bg-red-800">{deleting ? '删除中…' : '删除车辆'}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
   );
 }

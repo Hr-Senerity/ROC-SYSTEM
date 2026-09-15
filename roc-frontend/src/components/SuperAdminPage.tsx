@@ -1,23 +1,28 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth, API_BASE } from '../App';
-import { ArrowLeft, Zap, Shield, Search, Trash2, UserX, UserCheck, Eye, Users, Server, Box } from 'lucide-react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Box, Eye, Search, Server, ShieldCheck, Trash2, UserCheck, Users, UserX } from 'lucide-react';
+import { useAuth } from '../app/auth/AuthProvider';
+import { apiRequest } from '../shared/api/client';
+import { ErrorState } from '../shared/ui/ErrorState';
+import { PageHeader } from '../shared/ui/PageHeader';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from './ui/alert-dialog';
+import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { Input } from './ui/input';
 
 interface UserData {
   id: string;
   username: string;
   email: string;
-  role: string;
-  status: string;
+  role: 'super_admin' | 'regular';
+  status: 'active' | 'disabled';
   created_at: string;
   updated_at: string;
 }
 
-interface UserStats {
-  projects: number;
-  vehicles: number;
-}
-
+interface UserStats { projects: number; vehicles: number }
 interface SystemStats {
   total_users: number;
   active_users: number;
@@ -26,448 +31,192 @@ interface SystemStats {
   online_vehicles: number;
 }
 
+interface UserListResponse { users?: UserData[]; total?: number }
+interface StatsResponse { stats?: SystemStats }
+interface UserDetailResponse { user?: UserData; stats?: UserStats }
+interface PendingAction { kind: 'status' | 'delete'; user: UserData }
+
+const PAGE_SIZE = 20;
+
 export function SuperAdminPage() {
   const { token, username } = useAuth();
-  const navigate = useNavigate();
-
   const [users, setUsers] = useState<UserData[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
-
+  const [stats, setStats] = useState<SystemStats | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserData | null>(null);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
-  const [showDetail, setShowDetail] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
-  const [stats, setStats] = useState<SystemStats | null>(null);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     setError('');
+    const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+    if (search) params.set('search', search);
+    if (roleFilter) params.set('role', roleFilter);
+    if (statusFilter) params.set('status', statusFilter);
     try {
-      const params = new URLSearchParams();
-      params.set('page', String(page));
-      params.set('limit', '20');
-      if (search) params.set('search', search);
-      if (roleFilter) params.set('role', roleFilter);
-      if (statusFilter) params.set('status', statusFilter);
-
-      const resp = await fetch(`${API_BASE}/api/admin/users?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        setUsers(data.users || []);
-        setTotal(data.total || 0);
-      } else {
-        setError(data.message || 'Failed to load users');
-      }
-    } catch {
-      setError('Network error');
+      const data = await apiRequest<UserListResponse>(`/api/admin/users?${params}`, { token });
+      setUsers(data.users || []);
+      setTotal(data.total || 0);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '无法加载平台账户');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [page, roleFilter, search, statusFilter, token]);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
-      const resp = await fetch(`${API_BASE}/api/admin/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) setStats(data.stats);
-    } catch { /* ignore */ }
-  };
+      const data = await apiRequest<StatsResponse>('/api/admin/stats', { token });
+      setStats(data.stats || null);
+    } catch {
+      setStats(null);
+    }
+  }, [token]);
 
-  useEffect(() => {
-    fetchUsers();
-    fetchStats();
-  }, [page]);
+  useEffect(() => { void fetchUsers(); }, [fetchUsers]);
+  useEffect(() => { void fetchStats(); }, [fetchStats]);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
+  const searchAccounts = (event: FormEvent) => {
+    event.preventDefault();
     setPage(1);
-    fetchUsers();
+    setSearch(searchDraft.trim());
   };
 
-  const handleToggleStatus = async (userId: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'active' ? 'disabled' : 'active';
-    const action = newStatus === 'disabled' ? '停用' : '启用';
-    if (!window.confirm(`确定要${action}该账户吗？`)) return;
-
-    try {
-      const resp = await fetch(`${API_BASE}/api/admin/users/${userId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        fetchUsers();
-      } else {
-        alert(data.message || '操作失败');
-      }
-    } catch {
-      alert('网络错误');
-    }
-  };
-
-  const handleDelete = async (userId: string) => {
-    if (!window.confirm('确定要删除该用户吗？此操作不可撤销，将级联删除其所有项目、车辆数据。')) return;
-
-    try {
-      const resp = await fetch(`${API_BASE}/api/admin/users/${userId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        fetchUsers();
-        setShowDetail(false);
-      } else {
-        alert(data.message || '删除失败');
-      }
-    } catch {
-      alert('网络错误');
-    }
-  };
-
-  const handleViewDetail = async (user: UserData) => {
+  const viewDetail = async (user: UserData) => {
     setSelectedUser(user);
-    setShowDetail(true);
+    setUserStats(null);
+    setDetailLoading(true);
     try {
-      const resp = await fetch(`${API_BASE}/api/admin/users/${user.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        setUserStats(data.stats);
-      }
-    } catch { /* ignore */ }
+      const data = await apiRequest<UserDetailResponse>(`/api/admin/users/${user.id}`, { token });
+      if (data.user) setSelectedUser(data.user);
+      setUserStats(data.stats || null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '无法加载账户详情');
+    } finally {
+      setDetailLoading(false);
+    }
   };
 
-  const totalPages = Math.ceil(total / 20);
+  const executeAction = async () => {
+    if (!pendingAction || actionLoading) return;
+    setActionLoading(true);
+    setError('');
+    const { user, kind } = pendingAction;
+    try {
+      if (kind === 'status') {
+        const nextStatus = user.status === 'active' ? 'disabled' : 'active';
+        await apiRequest(`/api/admin/users/${user.id}/status`, {
+          method: 'PATCH', token, body: JSON.stringify({ status: nextStatus }),
+        });
+        if (selectedUser?.id === user.id) setSelectedUser({ ...selectedUser, status: nextStatus });
+      } else {
+        await apiRequest(`/api/admin/users/${user.id}`, { method: 'DELETE', token });
+        if (selectedUser?.id === user.id) setSelectedUser(null);
+      }
+      setPendingAction(null);
+      await Promise.all([fetchUsers(), fetchStats()]);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : '平台账户操作失败');
+      setPendingAction(null);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const isSelf = (user: UserData) => user.username === username;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/projects')}
-                className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                返回
-              </button>
-              <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-purple-600" />
-                <span className="text-slate-900 font-medium">超级管理员</span>
-              </div>
-            </div>
+    <section className="space-y-6">
+      <PageHeader
+        title="平台账户"
+        description="这里管理数据库中的全部平台账户及其资源，不是当前账户的项目成员列表。新注册账户默认为普通用户。"
+        actions={<span className="inline-flex h-9 items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700"><ShieldCheck className="size-4" />超级管理员专属</span>}
+      />
 
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-600 rounded-lg flex items-center justify-center">
-                <Zap className="w-6 h-6 text-white" />
-              </div>
-              <span className="text-xl text-slate-900">ROC平台</span>
-            </div>
-          </div>
+      {stats && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <StatCard icon={<Users />} label="平台账户" value={stats.total_users} tone="blue" />
+          <StatCard icon={<UserCheck />} label="活跃账户" value={stats.active_users} tone="emerald" />
+          <StatCard icon={<Box />} label="全部项目" value={stats.total_projects} tone="amber" />
+          <StatCard icon={<Server />} label="全部车辆" value={stats.total_vehicles} tone="violet" />
+          <StatCard icon={<span className="size-2.5 rounded-full bg-emerald-500" />} label="在线车辆" value={stats.online_vehicles} tone="emerald" />
         </div>
-      </nav>
+      )}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Stats Cards */}
-        {stats && (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-            <div className="bg-white rounded-xl shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <Users className="w-4 h-4 text-blue-500" />
-                <span className="text-slate-500 text-sm">总用户</span>
-              </div>
-              <p className="text-2xl text-slate-900">{stats.total_users}</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <UserCheck className="w-4 h-4 text-green-500" />
-                <span className="text-slate-500 text-sm">活跃</span>
-              </div>
-              <p className="text-2xl text-slate-900">{stats.active_users}</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <Box className="w-4 h-4 text-orange-500" />
-                <span className="text-slate-500 text-sm">项目</span>
-              </div>
-              <p className="text-2xl text-slate-900">{stats.total_projects}</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <Server className="w-4 h-4 text-purple-500" />
-                <span className="text-slate-500 text-sm">车辆</span>
-              </div>
-              <p className="text-2xl text-slate-900">{stats.total_vehicles}</p>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-3 h-3 bg-green-500 rounded-full" />
-                <span className="text-slate-500 text-sm">在线</span>
-              </div>
-              <p className="text-2xl text-slate-900">{stats.online_vehicles}</p>
-            </div>
-          </div>
-        )}
-
-        <div className="flex gap-6">
-          {/* Main list */}
-          <div className={`${showDetail ? 'w-2/3' : 'w-full'} transition-all`}>
-            <div className="bg-white rounded-xl shadow-sm p-6">
-              <h2 className="text-2xl text-slate-900 mb-6">用户管理</h2>
-
-              {/* Search & Filters */}
-              <form onSubmit={handleSearch} className="flex flex-wrap gap-3 mb-6">
-                <div className="relative flex-1 min-w-[200px]">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="搜索用户名或邮箱..."
-                  />
-                </div>
-                <select
-                  value={roleFilter}
-                  onChange={(e) => setRoleFilter(e.target.value)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">全部角色</option>
-                  <option value="super_admin">超级管理员</option>
-                  <option value="regular">普通用户</option>
-                </select>
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">全部状态</option>
-                  <option value="active">活跃</option>
-                  <option value="disabled">已停用</option>
-                </select>
-                <button
-                  type="submit"
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  搜索
-                </button>
-              </form>
-
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600">
-                  {error}
-                </div>
-              )}
-
-              {/* Users Table */}
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="text-left py-3 px-4 text-slate-600 font-medium">用户名</th>
-                      <th className="text-left py-3 px-4 text-slate-600 font-medium">邮箱</th>
-                      <th className="text-left py-3 px-4 text-slate-600 font-medium">角色</th>
-                      <th className="text-left py-3 px-4 text-slate-600 font-medium">状态</th>
-                      <th className="text-left py-3 px-4 text-slate-600 font-medium">注册时间</th>
-                      <th className="text-right py-3 px-4 text-slate-600 font-medium">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((user) => (
-                      <tr key={user.id} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="py-3 px-4 text-slate-900">{user.username}</td>
-                        <td className="py-3 px-4 text-slate-600">{user.email}</td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-flex px-2 py-1 rounded-full text-xs ${
-                            user.role === 'super_admin'
-                              ? 'bg-purple-100 text-purple-700'
-                              : 'bg-blue-100 text-blue-700'
-                          }`}>
-                            {user.role === 'super_admin' ? '管理员' : '普通用户'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
-                            user.status === 'active'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-red-100 text-red-700'
-                          }`}>
-                            <div className={`w-1.5 h-1.5 rounded-full ${
-                              user.status === 'active' ? 'bg-green-500' : 'bg-red-500'
-                            }`} />
-                            {user.status === 'active' ? '活跃' : '已停用'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-500 text-sm">
-                          {new Date(user.created_at).toLocaleDateString('zh-CN')}
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => handleViewDetail(user)}
-                              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-                              title="查看详情"
-                            >
-                              <Eye className="w-4 h-4 text-slate-500" />
-                            </button>
-                            <button
-                              onClick={() => handleToggleStatus(user.id, user.status)}
-                              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
-                              title={user.status === 'active' ? '停用' : '启用'}
-                            >
-                              {user.status === 'active' ? (
-                                <UserX className="w-4 h-4 text-orange-500" />
-                              ) : (
-                                <UserCheck className="w-4 h-4 text-green-500" />
-                              )}
-                            </button>
-                            <button
-                              onClick={() => handleDelete(user.id)}
-                              className="p-2 hover:bg-red-50 rounded-lg transition-colors"
-                              title="删除"
-                            >
-                              <Trash2 className="w-4 h-4 text-red-500" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {users.length === 0 && !loading && (
-                      <tr>
-                        <td colSpan={6} className="py-12 text-center text-slate-400">
-                          暂无用户数据
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-6">
-                  <span className="text-slate-600 text-sm">共 {total} 个用户</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setPage(Math.max(1, page - 1))}
-                      disabled={page <= 1}
-                      className="px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      上一页
-                    </button>
-                    <span className="px-4 py-2 text-slate-600">
-                      {page} / {totalPages}
-                    </span>
-                    <button
-                      onClick={() => setPage(Math.min(totalPages, page + 1))}
-                      disabled={page >= totalPages}
-                      className="px-4 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      下一页
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Detail Panel */}
-          {showDetail && selectedUser && (
-            <div className="w-1/3">
-              <div className="bg-white rounded-xl shadow-sm p-6 sticky top-24">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl text-slate-900">用户详情</h3>
-                  <button
-                    onClick={() => setShowDetail(false)}
-                    className="text-slate-400 hover:text-slate-600"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-slate-500 text-sm">用户名</label>
-                    <p className="text-slate-900">{selectedUser.username}</p>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 text-sm">邮箱</label>
-                    <p className="text-slate-900">{selectedUser.email}</p>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 text-sm">角色</label>
-                    <p className="text-slate-900">
-                      {selectedUser.role === 'super_admin' ? '超级管理员' : '普通用户'}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 text-sm">状态</label>
-                    <p className={`${selectedUser.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
-                      {selectedUser.status === 'active' ? '活跃' : '已停用'}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="text-slate-500 text-sm">注册时间</label>
-                    <p className="text-slate-900">
-                      {new Date(selectedUser.created_at).toLocaleString('zh-CN')}
-                    </p>
-                  </div>
-
-                  {userStats && (
-                    <>
-                      <hr className="border-slate-200" />
-                      <div>
-                        <label className="text-slate-500 text-sm">关联数据统计</label>
-                        <div className="flex gap-4 mt-2">
-                          <div className="bg-slate-50 rounded-lg p-3 flex-1 text-center">
-                            <p className="text-2xl text-slate-900">{userStats.projects}</p>
-                            <p className="text-slate-500 text-xs">项目</p>
-                          </div>
-                          <div className="bg-slate-50 rounded-lg p-3 flex-1 text-center">
-                            <p className="text-2xl text-slate-900">{userStats.vehicles}</p>
-                            <p className="text-slate-500 text-xs">车辆</p>
-                          </div>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  <div className="flex gap-2 pt-4">
-                    <button
-                      onClick={() => handleToggleStatus(selectedUser.id, selectedUser.status)}
-                      className="flex-1 px-4 py-2 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm"
-                    >
-                      {selectedUser.status === 'active' ? '停用账户' : '启用账户'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(selectedUser.id)}
-                      className="flex-1 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm"
-                    >
-                      删除用户
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 p-4 sm:p-5">
+          <form onSubmit={searchAccounts} className="flex flex-col gap-3 lg:flex-row">
+            <label className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-400" />
+              <span className="sr-only">搜索平台账户</span>
+              <Input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} className="pl-9" placeholder="搜索用户名或邮箱" />
+            </label>
+            <select value={roleFilter} onChange={(event) => { setPage(1); setRoleFilter(event.target.value); }} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm">
+              <option value="">全部角色</option><option value="super_admin">超级管理员</option><option value="regular">普通用户</option>
+            </select>
+            <select value={statusFilter} onChange={(event) => { setPage(1); setStatusFilter(event.target.value); }} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm">
+              <option value="">全部状态</option><option value="active">正常</option><option value="disabled">已停用</option>
+            </select>
+            <Button type="submit">查询</Button>
+          </form>
         </div>
+
+        {error && <div className="p-4"><ErrorState message={error} onRetry={() => void fetchUsers()} /></div>}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">账户</th><th className="px-5 py-3">角色</th><th className="px-5 py-3">状态</th><th className="px-5 py-3">注册时间</th><th className="px-5 py-3 text-right">操作</th></tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {users.map((user) => (
+                <tr key={user.id} className="hover:bg-slate-50/80">
+                  <td className="px-5 py-4"><p className="font-medium text-slate-950">{user.username}{isSelf(user) && <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-700">当前账户</span>}</p><p className="mt-0.5 text-xs text-slate-500">{user.email}</p></td>
+                  <td className="px-5 py-4"><RoleBadge role={user.role} /></td>
+                  <td className="px-5 py-4"><AccountStatusBadge status={user.status} /></td>
+                  <td className="px-5 py-4 text-slate-500">{new Date(user.created_at).toLocaleDateString('zh-CN')}</td>
+                  <td className="px-5 py-4"><div className="flex justify-end gap-1"><Button variant="ghost" size="icon" onClick={() => void viewDetail(user)} aria-label={`查看 ${user.username}`}><Eye /></Button><Button variant="ghost" size="icon" disabled={isSelf(user)} onClick={() => setPendingAction({ kind: 'status', user })} aria-label={`${user.status === 'active' ? '停用' : '启用'} ${user.username}`} className="text-amber-700">{user.status === 'active' ? <UserX /> : <UserCheck />}</Button><Button variant="ghost" size="icon" disabled={isSelf(user)} onClick={() => setPendingAction({ kind: 'delete', user })} aria-label={`删除 ${user.username}`} className="text-red-700"><Trash2 /></Button></div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {loading && <p className="border-t p-8 text-center text-sm text-slate-500">正在加载平台账户…</p>}
+        {!loading && users.length === 0 && <p className="border-t p-10 text-center text-sm text-slate-500">没有符合条件的平台账户</p>}
+        <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 text-sm text-slate-500"><span>共 {total} 个账户</span><div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)}>上一页</Button><span>{page} / {totalPages}</span><Button variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>下一页</Button></div></div>
       </div>
-    </div>
+
+      <Dialog open={Boolean(selectedUser)} onOpenChange={(open) => { if (!open) setSelectedUser(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>平台账户详情</DialogTitle><DialogDescription>账户身份和其在数据库中直接拥有的资源统计。</DialogDescription></DialogHeader>
+          {selectedUser && <div className="space-y-4"><div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4"><div><p className="font-semibold text-slate-950">{selectedUser.username}</p><p className="mt-1 text-sm text-slate-500">{selectedUser.email}</p></div><div className="space-y-2 text-right"><RoleBadge role={selectedUser.role} /><div><AccountStatusBadge status={selectedUser.status} /></div></div></div><dl className="grid grid-cols-2 gap-3"><div className="rounded-xl border p-4"><dt className="text-xs text-slate-500">拥有项目</dt><dd className="mt-1 text-2xl font-semibold text-slate-950">{detailLoading ? '…' : userStats?.projects ?? 0}</dd></div><div className="rounded-xl border p-4"><dt className="text-xs text-slate-500">拥有车辆</dt><dd className="mt-1 text-2xl font-semibold text-slate-950">{detailLoading ? '…' : userStats?.vehicles ?? 0}</dd></div></dl><p className="text-xs text-slate-500">注册时间：{new Date(selectedUser.created_at).toLocaleString('zh-CN')}</p>{!isSelf(selectedUser) && <div className="flex justify-end gap-2 border-t pt-4"><Button variant="outline" className="text-amber-700" onClick={() => setPendingAction({ kind: 'status', user: selectedUser })}>{selectedUser.status === 'active' ? '停用账户' : '启用账户'}</Button><Button variant="outline" className="text-red-700" onClick={() => setPendingAction({ kind: 'delete', user: selectedUser })}>删除账户</Button></div>}</div>}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={Boolean(pendingAction)} onOpenChange={(open) => { if (!open && !actionLoading) setPendingAction(null); }}>
+        <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{pendingAction?.kind === 'delete' ? `删除账户“${pendingAction.user.username}”？` : `${pendingAction?.user.status === 'active' ? '停用' : '启用'}账户“${pendingAction?.user.username}”？`}</AlertDialogTitle><AlertDialogDescription>{pendingAction?.kind === 'delete' ? '此操作不可撤销，并会级联删除该账户拥有的项目、车辆及关联数据。' : pendingAction?.user.status === 'active' ? '停用后，该账户已有会话将在下一次鉴权时失效，无法继续访问工作台。' : '启用后，该账户可重新登录并访问自己拥有的资源。'}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={actionLoading}>取消</AlertDialogCancel><AlertDialogAction disabled={actionLoading} onClick={(event) => { event.preventDefault(); void executeAction(); }} className={pendingAction?.kind === 'delete' ? 'bg-red-700 hover:bg-red-800' : ''}>{actionLoading ? '处理中…' : '确认操作'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+      </AlertDialog>
+    </section>
   );
+}
+
+function StatCard({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: number; tone: 'blue' | 'emerald' | 'amber' | 'violet' }) {
+  const toneClass = { blue: 'bg-blue-50 text-blue-700', emerald: 'bg-emerald-50 text-emerald-700', amber: 'bg-amber-50 text-amber-700', violet: 'bg-violet-50 text-violet-700' }[tone];
+  return <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-3"><span className={`grid size-9 place-items-center rounded-xl [&_svg]:size-4 ${toneClass}`}>{icon}</span><span className="text-sm text-slate-500">{label}</span></div><p className="mt-3 text-2xl font-semibold text-slate-950">{value}</p></div>;
+}
+
+function RoleBadge({ role }: { role: UserData['role'] }) {
+  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${role === 'super_admin' ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>{role === 'super_admin' ? '超级管理员' : '普通用户'}</span>;
+}
+
+function AccountStatusBadge({ status }: { status: UserData['status'] }) {
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status === 'active' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}><i className={`size-1.5 rounded-full ${status === 'active' ? 'bg-emerald-500' : 'bg-red-500'}`} />{status === 'active' ? '正常' : '已停用'}</span>;
 }

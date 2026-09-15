@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../App';
-import { Lock, User, ArrowLeft, Zap } from 'lucide-react';
+import { CircleAlert, Lock, User } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../app/auth/AuthProvider';
+import { AuthShell, authErrorMessage } from './AuthShell';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
+
+const inputClassName = 'h-12 w-full rounded-xl border border-[#dfe3e9] bg-[#fafbfc] pl-11 pr-4 text-[15px] text-[#161c28] outline-none transition placeholder:text-[#a5abb5] hover:border-[#cbd2dc] focus:border-[#2f6bff] focus:bg-white focus:ring-4 focus:ring-[#2f6bff]/10';
 
 export function LoginPage() {
   const [username, setUsername] = useState('');
@@ -11,14 +13,15 @@ export function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
 
     if (!username || !password) {
-      setError('请填写所有字段');
+      setError('请填写用户名和密码');
       return;
     }
 
@@ -27,100 +30,48 @@ export function LoginPage() {
     setLoading(false);
 
     if (result.ok) {
-      navigate('/projects');
+      const from = (location.state as { from?: string } | null)?.from;
+      navigate(from || '/projects', { replace: true });
     } else {
-      setError(result.message || '登录失败');
+      setError(authErrorMessage(result.message, '登录失败，请稍后重试'));
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-2 text-slate-600 hover:text-slate-900 mb-8 transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          返回首页
-        </button>
+    <AuthShell
+      eyebrow="Welcome back"
+      title="欢迎回来"
+      description="登录后继续管理你的项目、地图与机器人运行状态。"
+      footer={<><span>还没有账户？</span>{' '}<Link to="/register" className="font-semibold text-[#2f6bff] transition hover:text-[#1f56dd]">免费创建账户</Link></>}
+    >
+      {error && (
+        <div role="alert" className="mb-5 flex items-start gap-2.5 rounded-xl border border-[#f5c8c7] bg-[#fff5f4] px-3.5 py-3 text-sm leading-5 text-[#b63c38]">
+          <CircleAlert className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
 
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className="flex items-center justify-center gap-2 mb-8">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-purple-600 rounded-lg flex items-center justify-center">
-              <Zap className="w-7 h-7 text-white" />
-            </div>
-            <span className="text-2xl text-slate-900">ROC平台</span>
-          </div>
-
-          <h2 className="text-3xl text-center mb-2 text-slate-900">欢迎回来</h2>
-          <p className="text-center text-slate-600 mb-8">登录您的账户继续使用</p>
-
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-center">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label className="block text-slate-700 mb-2">用户名</label>
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="请输入用户名"
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-slate-700 mb-2">密码</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="••••••••"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" className="w-4 h-4 text-blue-600 rounded" />
-                <span className="text-slate-600">记住我</span>
-              </label>
-              <a href="#" className="text-blue-600 hover:text-blue-700">
-                忘记密码？
-              </a>
-            </div>
-
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white"
-            >
-              {loading ? '登录中...' : '登录'}
-            </Button>
-          </form>
-
-          <div className="mt-6 text-center">
-            <span className="text-slate-600">还没有账户？</span>{' '}
-            <button
-              onClick={() => navigate('/register')}
-              className="text-blue-600 hover:text-blue-700"
-            >
-              立即注册
-            </button>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <label htmlFor="login-username" className="mb-2 block text-sm font-medium text-[#343b49]">用户名</label>
+          <div className="relative">
+            <User className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#8d95a3]" />
+            <input id="login-username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} className={inputClassName} placeholder="请输入用户名" autoFocus />
           </div>
         </div>
-      </div>
-    </div>
+
+        <div>
+          <label htmlFor="login-password" className="mb-2 block text-sm font-medium text-[#343b49]">密码</label>
+          <div className="relative">
+            <Lock className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#8d95a3]" />
+            <input id="login-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} className={inputClassName} placeholder="请输入密码" />
+          </div>
+        </div>
+
+        <Button type="submit" disabled={loading} className="h-12 w-full rounded-xl bg-[#111722] text-[15px] font-semibold text-white shadow-[0_10px_24px_rgba(17,23,34,.14)] transition hover:-translate-y-0.5 hover:bg-[#2f6bff]">
+          {loading ? '正在登录…' : '进入工作台'}
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

@@ -2,16 +2,19 @@
 
 #include "config/AppConfig.h"
 #include "db/PostgresClient.h"
-#include "db/ConnectionPool.h"
 #include "controllers/AuthController.h"
 #include "controllers/AdminController.h"
 #include "controllers/ProjectController.h"
 #include "controllers/VehicleController.h"
 #include "controllers/StatusWsController.h"
 #include "protocols/ProtocolBridge.h"
+#include "services/VehicleStatusService.h"
 
 // Forward declaration from protocols/roc/roc_bridge.cpp
-void registerProtocolBridge(std::shared_ptr<roc::protocol::ProtocolBridge> bridge);
+void registerProtocolBridge(std::shared_ptr<roc::protocol::ProtocolBridge> bridge,
+                            const std::string &connStr,
+                            const std::string &deviceToken,
+                            bool allowSharedToken);
 
 static drogon::HttpResponsePtr jsonResp(const Json::Value &v, int code = 200) {
   auto resp = drogon::HttpResponse::newHttpJsonResponse(v);
@@ -38,9 +41,6 @@ int main() {
 
   const auto connStr = roc::db::makeConnStr(
       cfg.db.host, cfg.db.port, cfg.db.name, cfg.db.user, cfg.db.password);
-
-  // Initialize connection pool
-  roc::db::initPool(connStr, 4);
 
   // Health check
   app().registerHandler(
@@ -81,43 +81,44 @@ int main() {
   roc::controller::registerProjectRoutes(cfg, connStr);
   roc::controller::registerVehicleRoutes(cfg, connStr);
 
+  roc::ws::StatusWsController::configure(
+      cfg.auth.jwtSecret, connStr, cfg.realtime.allowedOrigins);
+
   // Initialize protocol bridge with WebSocket broadcast
   auto bridge = std::make_shared<roc::protocol::ProtocolBridge>();
-  bridge->onStatusReport([](const roc::protocol::RobotStatus &s) {
+  bridge->onStatusReport([connStr](const roc::protocol::RobotStatus &s) {
     LOG_INFO << "Robot status: " << s.robot_id
              << " online=" << s.online
              << " battery=" << s.battery_level
              << " pos=(" << s.position_x << "," << s.position_y << ")";
 
-    // Broadcast to WebSocket clients
-    Json::Value msg;
-    msg["type"] = "status_update";
-    msg["robot_id"] = s.robot_id;
-    msg["online"] = s.online;
-    msg["cpu"] = s.cpu_usage;
-    msg["memory"] = s.memory_usage;
-    msg["battery"] = s.battery_level;
-    msg["localization_confidence"] = s.localization_confidence;
-    msg["position_x"] = s.position_x;
-    msg["position_y"] = s.position_y;
-    msg["position_theta"] = s.position_theta;
-    msg["velocity_linear"] = s.velocity_linear;
-    msg["velocity_angular"] = s.velocity_angular;
-
-    Json::StreamWriterBuilder w;
-    w["indentation"] = "";
-    roc::ws::StatusWsController::broadcast(Json::writeString(w, msg));
+    try {
+      std::string error;
+      const auto vehicle = roc::service::VehicleStatusService::applyStatus(
+          connStr, s, &error);
+      if (!vehicle) {
+        LOG_WARN << "Rejected robot status " << s.robot_id << ": " << error;
+        return false;
+      }
+      roc::ws::StatusWsController::broadcastVehicle("vehicle_updated", *vehicle);
+      return true;
+    } catch (const std::exception &error) {
+      LOG_ERROR << "Status persistence failed for " << s.robot_id << ": " << error.what();
+      return false;
+    }
   });
   bridge->onControlCommand([](const roc::protocol::ControlCommand &c) {
     LOG_INFO << "Control command: " << c.robot_id << " type=" << c.command_type;
   });
-  registerProtocolBridge(bridge);
+  registerProtocolBridge(
+      bridge, connStr, cfg.device.token, cfg.device.allowSharedToken);
 
   LOG_INFO << "Starting roc-backend on " << cfg.http.listenHost << ":" << cfg.http.listenPort;
   LOG_INFO << "DB target " << cfg.db.host << ":" << cfg.db.port << "/" << cfg.db.name;
 
-  // Serve uploaded map images from document root
-  app().setDocumentRoot(".");
+  // Keep the generic static-file handler away from private map uploads.
+  // Map bytes are served only by the authenticated project route.
+  app().setDocumentRoot("./public");
 
   app().addListener(cfg.http.listenHost, static_cast<uint16_t>(cfg.http.listenPort));
   app().run();

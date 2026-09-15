@@ -24,6 +24,7 @@ add_executable(roc-backend-server
   src/utils/PasswordHash.h
   src/utils/JwtHelper.cpp
   src/utils/JwtHelper.h
+  src/utils/InputValidation.h
   src/models/User.h
   src/controllers/AuthController.cpp
   src/controllers/AuthController.h
@@ -35,6 +36,8 @@ add_executable(roc-backend-server
   src/controllers/VehicleController.h
   src/controllers/StatusWsController.cpp
   src/controllers/StatusWsController.h
+  src/services/VehicleStatusService.cpp
+  src/services/VehicleStatusService.h
   src/middleware/AuthMiddleware.cpp
   src/middleware/AuthMiddleware.h
   src/protocols/common/types.h

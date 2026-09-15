@@ -69,10 +69,10 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
           std::string salt = roc::utils::generateSalt();
           std::string hash = roc::utils::hashPassword(password, salt);
 
-          std::string userId = pg.insertReturning(
+          std::string userId = pg.insertReturningParams(
               "INSERT INTO users (username, email, password_hash, salt, role) "
-              "VALUES ('" + username + "', '" + email + "', '" + hash + "', '" + salt + "', 'regular') "
-              "RETURNING id");
+              "VALUES ($1, $2, $3, $4, 'regular') RETURNING id",
+              {username, email, hash, salt});
 
           // Create JWT
           Json::Value payload;

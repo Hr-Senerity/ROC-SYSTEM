@@ -10,14 +10,15 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ARG NPM_MIRROR=default
 RUN if [ "$NPM_MIRROR" = "npmmirror" ]; then npm config set registry https://registry.npmmirror.com; fi
 
-COPY roc-frontend/package*.json ./
-RUN npm install
+RUN corepack enable
+COPY roc-frontend/package.json roc-frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # 复制源代码
 COPY roc-frontend/ ./
 
 # 构建应用
-RUN npm run build
+RUN pnpm run build
 
 # 第二阶段：运行阶段
 FROM nginx:alpine

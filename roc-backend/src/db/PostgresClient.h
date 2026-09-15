@@ -34,6 +34,8 @@ class PostgresClient {
 
   // Execute INSERT and return the first column of the first row as string
   std::string insertReturning(const std::string &sql) const;
+  std::string insertReturningParams(const std::string &sql,
+                                    const std::vector<std::string> &params) const;
 
  private:
   pqxx::connection makeConn() const;

@@ -7,8 +7,11 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <ctime>
+#include <iomanip>
+#include <random>
 
 #include "db/PostgresClient.h"
+#include "utils/InputValidation.h"
 #include "utils/JwtHelper.h"
 
 namespace roc::controller {
@@ -36,17 +39,64 @@ std::optional<Json::Value> authReq(const HttpRequestPtr &req, const std::string 
   return roc::utils::verifyJwt(h.substr(7), secret);
 }
 
-std::string esc(const std::string &s) {
-  std::string o;
-  o.reserve(s.size() * 2);
-  for (char c : s) { if (c == '\'') o += "''"; else o += c; }
-  return o;
+enum class ProjectAccess { Allowed, NotFound, Forbidden };
+
+ProjectAccess checkProjectAccess(roc::db::PostgresClient &pg,
+                                 const std::string &projectId,
+                                 const std::string &userId,
+                                 const std::string &role) {
+  const auto project = pg.queryOneParams(
+      "SELECT user_id FROM projects WHERE id = $1::uuid", {projectId});
+  if (project.isNull()) return ProjectAccess::NotFound;
+  if (role != "super_admin" && project["user_id"].asString() != userId) {
+    return ProjectAccess::Forbidden;
+  }
+  return ProjectAccess::Allowed;
+}
+
+bool respondForDeniedProject(ProjectAccess access,
+                             const std::function<void(const HttpResponsePtr &)> &cb) {
+  if (access == ProjectAccess::NotFound) {
+    cb(jsonResp(k404NotFound, makeResp(false, "Project not found")));
+    return true;
+  }
+  if (access == ProjectAccess::Forbidden) {
+    cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden")));
+    return true;
+  }
+  return false;
+}
+
+bool respondForInvalidId(
+    const std::string &value,
+    const std::function<void(const HttpResponsePtr &)> &cb,
+    const std::string &field) {
+  if (roc::utils::isUuid(value)) return false;
+  cb(jsonResp(k400BadRequest, makeResp(false, field + " must be a UUID")));
+  return true;
+}
+
+constexpr const char *kMapColumns =
+    "id, project_id, name, "
+    "CASE WHEN image_url IS NULL THEN NULL ELSE '/api/projects/' || project_id::text || "
+    "'/maps/' || id::text || '/image' END AS image_url, "
+    "is_active, coordinate_origin_x, "
+    "coordinate_origin_y, coordinate_mode, image_width, image_height, "
+    "resolution, origin_theta, road_network, created_at";
+
+std::string randomUploadSuffix() {
+  std::random_device device;
+  std::mt19937_64 engine(device());
+  std::ostringstream value;
+  value << std::hex << engine();
+  return value.str();
 }
 
 }  // namespace
 
 void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string &connStr) {
   auto jwtSecret = cfg.auth.jwtSecret;
+  const auto mapStorageDirectory = cfg.storage.mapDirectory;
 
   // GET /api/projects — list user's projects
   app().registerHandler(
@@ -61,10 +111,18 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
 
         try {
           roc::db::PostgresClient pg(connStr);
-          std::string sql = role == "super_admin"
-              ? "SELECT id, user_id, name, description, status, created_at, updated_at FROM projects ORDER BY created_at DESC"
-              : "SELECT id, user_id, name, description, status, created_at, updated_at FROM projects WHERE user_id = '" + esc(userId) + "' ORDER BY created_at DESC";
-          auto projects = pg.query(sql);
+          const auto projects = role == "super_admin"
+              ? pg.query(
+                    "SELECT p.id, p.user_id, u.username AS owner_username, p.name, "
+                    "p.description, p.status, p.created_at, p.updated_at "
+                    "FROM projects p JOIN users u ON u.id = p.user_id "
+                    "ORDER BY p.created_at DESC")
+              : pg.queryParams(
+                    "SELECT p.id, p.user_id, u.username AS owner_username, p.name, "
+                    "p.description, p.status, p.created_at, p.updated_at "
+                    "FROM projects p JOIN users u ON u.id = p.user_id "
+                    "WHERE p.user_id = $1::uuid ORDER BY p.created_at DESC",
+                    {userId});
 
           Json::Value resp;
           resp["ok"] = true;
@@ -96,11 +154,16 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
 
         try {
           roc::db::PostgresClient pg(connStr);
-          std::string id = pg.insertReturning(
-              "INSERT INTO projects (user_id, name, description) VALUES ('" +
-              esc(userId) + "', '" + esc(name) + "', '" + esc(desc) + "') RETURNING id");
+          std::string id = pg.insertReturningParams(
+              "INSERT INTO projects (user_id, name, description) "
+              "VALUES ($1::uuid, $2, $3) RETURNING id",
+              {userId, name, desc});
 
-          auto proj = pg.queryOne("SELECT id, user_id, name, description, status, created_at, updated_at FROM projects WHERE id = '" + esc(id) + "'");
+          auto proj = pg.queryOneParams(
+              "SELECT p.id, p.user_id, u.username AS owner_username, p.name, "
+              "p.description, p.status, p.created_at, p.updated_at "
+              "FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = $1::uuid",
+              {id});
 
           Json::Value resp;
           resp["ok"] = true;
@@ -121,14 +184,18 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id")) return;
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
 
         try {
           roc::db::PostgresClient pg(connStr);
-          std::string sql = "SELECT id, user_id, name, description, status, created_at, updated_at FROM projects WHERE id = '" + esc(projId) + "'";
-          auto proj = pg.queryOne(sql);
+          auto proj = pg.queryOneParams(
+              "SELECT p.id, p.user_id, u.username AS owner_username, p.name, "
+              "p.description, p.status, p.created_at, p.updated_at "
+              "FROM projects p JOIN users u ON u.id = p.user_id WHERE p.id = $1::uuid",
+              {projId});
           if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
           if (role != "super_admin" && proj["user_id"].asString() != userId) {
             cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
@@ -153,6 +220,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id")) return;
         auto body = req->getJsonObject();
         if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
 
@@ -161,23 +229,34 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
 
         try {
           roc::db::PostgresClient pg(connStr);
-          auto proj = pg.queryOne("SELECT user_id FROM projects WHERE id = '" + esc(projId) + "'");
+          auto proj = pg.queryOneParams(
+              "SELECT user_id FROM projects WHERE id = $1::uuid", {projId});
           if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
           if (role != "super_admin" && proj["user_id"].asString() != userId) {
             cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
           }
 
+          const bool updateName = body->isMember("name");
+          const bool updateDescription = body->isMember("description");
           std::string name = (*body).get("name", "").asString();
           std::string desc = (*body).get("description", "").asString();
+          if (updateName && name.empty()) {
+            cb(jsonResp(k400BadRequest, makeResp(false, "name cannot be empty")));
+            return;
+          }
 
-          std::ostringstream sql;
-          sql << "UPDATE projects SET updated_at = NOW()";
-          if (!name.empty()) sql << ", name = '" << esc(name) << "'";
-          if (body->isMember("description")) sql << ", description = '" << esc(desc) << "'";
-          sql << " WHERE id = '" << esc(projId) << "'";
-          pg.execute(sql.str());
-
-          auto updated = pg.queryOne("SELECT id, user_id, name, description, status, created_at, updated_at FROM projects WHERE id = '" + esc(projId) + "'");
+          auto updated = pg.queryOneParams(
+              "UPDATE projects SET "
+              "name = CASE WHEN $2::boolean THEN $3 ELSE name END, "
+              "description = CASE WHEN $4::boolean THEN $5 ELSE description END, "
+              "updated_at = NOW() WHERE id = $1::uuid "
+              "RETURNING id, user_id, name, description, status, created_at, updated_at",
+              {projId, updateName ? "true" : "false", name,
+               updateDescription ? "true" : "false", desc});
+          const auto owner = pg.queryOneParams(
+              "SELECT username FROM users WHERE id = $1::uuid",
+              {updated["user_id"].asString()});
+          if (!owner.isNull()) updated["owner_username"] = owner["username"];
           Json::Value resp;
           resp["ok"] = true;
           resp["project"] = updated;
@@ -197,19 +276,21 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id")) return;
 
         std::string userId = (*p)["user_id"].asString();
         std::string role = (*p)["role"].asString();
 
         try {
           roc::db::PostgresClient pg(connStr);
-          auto proj = pg.queryOne("SELECT user_id FROM projects WHERE id = '" + esc(projId) + "'");
+          auto proj = pg.queryOneParams(
+              "SELECT user_id FROM projects WHERE id = $1::uuid", {projId});
           if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
           if (role != "super_admin" && proj["user_id"].asString() != userId) {
             cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
           }
 
-          pg.execute("DELETE FROM projects WHERE id = '" + esc(projId) + "'");
+          pg.executeParams("DELETE FROM projects WHERE id = $1::uuid", {projId});
           cb(jsonResp(k200OK, makeResp(true, "Deleted")));
         } catch (const std::exception &e) {
           LOG_ERROR << "Delete project: " << e.what();
@@ -221,12 +302,21 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
   // GET /api/projects/{id}/maps — project maps
   app().registerHandler(
       "/api/projects/{id}/maps",
-      [connStr](const HttpRequestPtr &,
+      [connStr, jwtSecret](const HttpRequestPtr &req,
                 std::function<void(const HttpResponsePtr &)> &&cb,
                 const std::string &projId) {
+        auto principal = authReq(req, jwtSecret);
+        if (!principal) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id")) return;
         try {
           roc::db::PostgresClient pg(connStr);
-          auto maps = pg.query("SELECT id, project_id, name, image_url, is_active, coordinate_origin_x, coordinate_origin_y, road_network, created_at FROM maps WHERE project_id = '" + esc(projId) + "' ORDER BY created_at DESC");
+          const auto access = checkProjectAccess(
+              pg, projId, (*principal)["user_id"].asString(), (*principal)["role"].asString());
+          if (respondForDeniedProject(access, cb)) return;
+          auto maps = pg.queryParams(
+              std::string("SELECT ") + kMapColumns +
+                  " FROM maps WHERE project_id = $1::uuid ORDER BY created_at DESC",
+              {projId});
           Json::Value resp;
           resp["ok"] = true;
           resp["maps"] = maps;
@@ -238,71 +328,263 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
       },
       {Get, Options});
 
+  // GET /api/projects/{pid}/maps/{mid} — single map with parent ownership check
+  app().registerHandler(
+      "/api/projects/{pid}/maps/{mid}",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                          std::function<void(const HttpResponsePtr &)> &&cb,
+                          const std::string &projId, const std::string &mapId) {
+        auto principal = authReq(req, jwtSecret);
+        if (!principal) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id") ||
+            respondForInvalidId(mapId, cb, "map_id")) return;
+        try {
+          roc::db::PostgresClient pg(connStr);
+          const auto access = checkProjectAccess(
+              pg, projId, (*principal)["user_id"].asString(), (*principal)["role"].asString());
+          if (respondForDeniedProject(access, cb)) return;
+          auto map = pg.queryOneParams(
+              std::string("SELECT ") + kMapColumns +
+                  " FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              {mapId, projId});
+          if (map.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Map not found"))); return; }
+          Json::Value resp;
+          resp["ok"] = true;
+          resp["map"] = map;
+          cb(jsonResp(k200OK, resp));
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Get map: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
+      },
+      {Get, Options});
+
+  // GET /api/projects/{pid}/maps/{mid}/image — authenticated map bytes
+  app().registerHandler(
+      "/api/projects/{pid}/maps/{mid}/image",
+      [connStr, jwtSecret, mapStorageDirectory](
+          const HttpRequestPtr &req,
+          std::function<void(const HttpResponsePtr &)> &&cb,
+          const std::string &projId, const std::string &mapId) {
+        auto principal = authReq(req, jwtSecret);
+        if (!principal) {
+          cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized")));
+          return;
+        }
+        if (respondForInvalidId(projId, cb, "project_id") ||
+            respondForInvalidId(mapId, cb, "map_id")) return;
+        try {
+          roc::db::PostgresClient pg(connStr);
+          const auto access = checkProjectAccess(
+              pg, projId, (*principal)["user_id"].asString(),
+              (*principal)["role"].asString());
+          if (respondForDeniedProject(access, cb)) return;
+
+          const auto map = pg.queryOneParams(
+              "SELECT image_url FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              {mapId, projId});
+          if (map.isNull() || map["image_url"].isNull()) {
+            cb(jsonResp(k404NotFound, makeResp(false, "Map image not found")));
+            return;
+          }
+
+          const auto storedPath = map["image_url"].asString();
+          const auto fileName = std::filesystem::path(storedPath).filename();
+          if (fileName.empty() || fileName == "." || fileName == "..") {
+            cb(jsonResp(k404NotFound, makeResp(false, "Map image not found")));
+            return;
+          }
+          const auto diskPath = std::filesystem::path(mapStorageDirectory) / fileName;
+          std::error_code ec;
+          if (!std::filesystem::is_regular_file(diskPath, ec) || ec) {
+            cb(jsonResp(k404NotFound, makeResp(false, "Map image not found")));
+            return;
+          }
+
+          auto response = HttpResponse::newFileResponse(diskPath.string());
+          response->addHeader("Cache-Control", "private, max-age=300");
+          response->addHeader("X-Content-Type-Options", "nosniff");
+          cb(response);
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Get map image: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
+      },
+      {Get, Options});
+
   // POST /api/projects/{id}/maps/upload — JSON base64 upload
   app().registerHandler(
       "/api/projects/{id}/maps/upload",
-      [connStr, jwtSecret](const HttpRequestPtr &req,
+      [connStr, jwtSecret, mapStorageDirectory](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id")) return;
         auto body = req->getJsonObject();
         if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
         std::string b64 = (*body).get("image_base64", "").asString();
         std::string mapName = (*body).get("name", "Untitled").asString();
         if (b64.empty()) { cb(jsonResp(k400BadRequest, makeResp(false, "image_base64 required"))); return; }
+        if (b64.size() > 14 * 1024 * 1024) { cb(jsonResp(k400BadRequest, makeResp(false, "Image is too large"))); return; }
         std::string raw = drogon::utils::base64Decode(b64);
-        std::string fn = "map_" + projId.substr(0,8) + "_" + std::to_string(time(nullptr)) + ".png";
+        const bool isPng = raw.size() >= 8 &&
+            static_cast<unsigned char>(raw[0]) == 0x89 && raw.substr(1, 3) == "PNG";
+        const bool isJpeg = raw.size() >= 3 &&
+            static_cast<unsigned char>(raw[0]) == 0xff &&
+            static_cast<unsigned char>(raw[1]) == 0xd8 &&
+            static_cast<unsigned char>(raw[2]) == 0xff;
+        if (!isPng && !isJpeg) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "Only PNG and JPEG images are supported")));
+          return;
+        }
+        if (raw.size() > 10 * 1024 * 1024) { cb(jsonResp(k400BadRequest, makeResp(false, "Image is too large"))); return; }
+        const std::string extension = isPng ? ".png" : ".jpg";
+        std::string fn = "map_" + projId.substr(0, 8) + "_" + randomUploadSuffix() + extension;
         std::string savedPath = "/static/maps/" + fn;
-        auto d = drogon::app().getDocumentRoot() + "/static/maps";
-        std::error_code ec;
-        std::filesystem::create_directories(d, ec);
-        if (ec) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to create upload directory"))); return; }
-        std::ofstream ofs(d + "/" + fn, std::ios::binary);
-        if (!ofs) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file"))); return; }
-        ofs.write(raw.data(), raw.size()); ofs.close();
+        const auto d = mapStorageDirectory;
         try {
           roc::db::PostgresClient pg(connStr);
-          std::string sq = "'";
-          std::string mid = pg.insertReturning("INSERT INTO maps (project_id,name,image_url) VALUES (" + sq + esc(projId) + sq + "," + sq + esc(mapName) + sq + "," + sq + esc(savedPath) + sq + ") RETURNING id");
-          auto m = pg.queryOne("SELECT id,project_id,name,image_url,is_active,coordinate_origin_x,coordinate_origin_y,road_network,created_at FROM maps WHERE id=" + sq + esc(mid) + sq);
+          const auto access = checkProjectAccess(
+              pg, projId, (*p)["user_id"].asString(), (*p)["role"].asString());
+          if (respondForDeniedProject(access, cb)) return;
+
+          std::error_code ec;
+          std::filesystem::create_directories(d, ec);
+          if (ec) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to create upload directory"))); return; }
+          const auto diskPath = d + "/" + fn;
+          std::ofstream ofs(diskPath, std::ios::binary);
+          if (!ofs) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file"))); return; }
+          ofs.write(raw.data(), static_cast<std::streamsize>(raw.size()));
+          ofs.close();
+          if (!ofs) {
+            std::filesystem::remove(diskPath, ec);
+            cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file")));
+            return;
+          }
+
+          std::string mid;
+          try {
+            mid = pg.insertReturningParams(
+                "INSERT INTO maps (project_id, name, image_url) "
+                "VALUES ($1::uuid, $2, $3) RETURNING id",
+                {projId, mapName, savedPath});
+          } catch (...) {
+            std::filesystem::remove(diskPath, ec);
+            throw;
+          }
+          auto m = pg.queryOneParams(
+              std::string("SELECT ") + kMapColumns + " FROM maps WHERE id = $1::uuid",
+              {mid});
           Json::Value resp; resp["ok"] = true; resp["map"] = m;
           cb(jsonResp(k201Created, resp));
-        } catch (const std::exception &e) { LOG_ERROR << "Upload: " << e.what(); cb(jsonResp(k500InternalServerError, makeResp(false, "Error"))); }
+        } catch (const std::exception &e) { LOG_ERROR << "Upload: " << e.what(); cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error"))); }
       }, {Post, Options});
+
+  // PUT /api/projects/{pid}/default-map — atomically switch the default map
+  app().registerHandler(
+      "/api/projects/{pid}/default-map",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                          std::function<void(const HttpResponsePtr &)> &&cb,
+                          const std::string &projId) {
+        auto principal = authReq(req, jwtSecret);
+        if (!principal) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id")) return;
+        auto body = req->getJsonObject();
+        if (!body || !body->isMember("map_id") || !(*body)["map_id"].isString()) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "map_id required")));
+          return;
+        }
+        const auto mapId = (*body)["map_id"].asString();
+        if (respondForInvalidId(mapId, cb, "map_id")) return;
+        try {
+          pqxx::connection connection(connStr);
+          pqxx::work tx(connection);
+          const auto project = tx.exec_params(
+              "SELECT user_id FROM projects WHERE id = $1::uuid FOR UPDATE", projId);
+          if (project.empty()) { cb(jsonResp(k404NotFound, makeResp(false, "Project not found"))); return; }
+          if ((*principal)["role"].asString() != "super_admin" &&
+              project[0][0].as<std::string>() != (*principal)["user_id"].asString()) {
+            cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden")));
+            return;
+          }
+          const auto map = tx.exec_params(
+              "SELECT id FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              mapId, projId);
+          if (map.empty()) { cb(jsonResp(k404NotFound, makeResp(false, "Map not found"))); return; }
+          tx.exec_params("UPDATE maps SET is_active = false WHERE project_id = $1::uuid", projId);
+          tx.exec_params(
+              "UPDATE maps SET is_active = true WHERE id = $1::uuid AND project_id = $2::uuid",
+              mapId, projId);
+          tx.commit();
+          Json::Value resp;
+          resp["ok"] = true;
+          resp["default_map_id"] = mapId;
+          cb(jsonResp(k200OK, resp));
+        } catch (const std::exception &e) {
+          LOG_ERROR << "Set default map: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
+      },
+      {Put, Options});
 
   // PATCH /api/projects/{pid}/maps/{mid} — rename map
   app().registerHandler(
       "/api/projects/{pid}/maps/{mid}",
       [connStr, jwtSecret](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb,
-                            const std::string &, const std::string &mapId) {
+                            const std::string &projId, const std::string &mapId) {
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id") ||
+            respondForInvalidId(mapId, cb, "map_id")) return;
         auto body = req->getJsonObject();
         if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
 
         try {
           roc::db::PostgresClient pg(connStr);
-          auto m = pg.queryOne("SELECT id FROM maps WHERE id = '" + esc(mapId) + "'");
+          const auto access = checkProjectAccess(
+              pg, projId, (*p)["user_id"].asString(), (*p)["role"].asString());
+          if (respondForDeniedProject(access, cb)) return;
+          auto m = pg.queryOneParams(
+              "SELECT id FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              {mapId, projId});
           if (m.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Map not found"))); return; }
 
+          std::vector<std::string> assignments;
+          std::vector<std::string> params;
+          auto addParam = [&](const std::string &column, const std::string &cast,
+                              const std::string &value) {
+            params.push_back(value);
+            assignments.push_back(column + " = $" + std::to_string(params.size()) + cast);
+          };
           if (body->isMember("name")) {
-            pg.execute("UPDATE maps SET name = '" + esc((*body)["name"].asString()) + "' WHERE id = '" + esc(mapId) + "'");
+            const auto name = (*body)["name"].asString();
+            if (name.empty()) { cb(jsonResp(k400BadRequest, makeResp(false, "name cannot be empty"))); return; }
+            addParam("name", "", name);
           }
-          if (body->isMember("coordinate_origin_x")) {
-            pg.execute("UPDATE maps SET coordinate_origin_x = " + std::to_string((*body)["coordinate_origin_x"].asDouble()) + " WHERE id = '" + esc(mapId) + "'");
+          if (body->isMember("coordinate_origin_x")) addParam("coordinate_origin_x", "::double precision", (*body)["coordinate_origin_x"].asString());
+          if (body->isMember("coordinate_origin_y")) addParam("coordinate_origin_y", "::double precision", (*body)["coordinate_origin_y"].asString());
+          if (body->isMember("resolution")) addParam("resolution", "::double precision", (*body)["resolution"].asString());
+          if (body->isMember("origin_theta")) addParam("origin_theta", "::double precision", (*body)["origin_theta"].asString());
+          if (body->isMember("road_network")) addParam("road_network", "::jsonb", (*body)["road_network"].toStyledString());
+          if (assignments.empty()) { cb(jsonResp(k400BadRequest, makeResp(false, "No supported fields"))); return; }
+          std::ostringstream update;
+          update << "UPDATE maps SET ";
+          for (size_t i = 0; i < assignments.size(); ++i) {
+            if (i > 0) update << ", ";
+            update << assignments[i];
           }
-          if (body->isMember("coordinate_origin_y")) {
-            pg.execute("UPDATE maps SET coordinate_origin_y = " + std::to_string((*body)["coordinate_origin_y"].asDouble()) + " WHERE id = '" + esc(mapId) + "'");
-          }
-          if (body->isMember("road_network")) {
-            std::string rnJson = (*body)["road_network"].toStyledString();
-            pg.execute("UPDATE maps SET road_network = '" + esc(rnJson) + "'::jsonb WHERE id = '" + esc(mapId) + "'");
-          }
+          params.push_back(mapId);
+          params.push_back(projId);
+          update << " WHERE id = $" << params.size() - 1 << "::uuid AND project_id = $"
+                 << params.size() << "::uuid";
+          pg.executeParams(update.str(), params);
 
-          auto updated = pg.queryOne(
-              "SELECT id, project_id, name, image_url, is_active, coordinate_origin_x, coordinate_origin_y, road_network, created_at FROM maps WHERE id = '" + esc(mapId) + "'");
+          auto updated = pg.queryOneParams(
+              std::string("SELECT ") + kMapColumns +
+                  " FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              {mapId, projId});
           Json::Value resp;
           resp["ok"] = true;
           resp["map"] = updated;
@@ -317,15 +599,41 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
   // DELETE /api/projects/{pid}/maps/{mid}
   app().registerHandler(
       "/api/projects/{pid}/maps/{mid}",
-      [connStr, jwtSecret](const HttpRequestPtr &req,
+      [connStr, jwtSecret, mapStorageDirectory](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb,
-                            const std::string &, const std::string &mapId) {
+                            const std::string &projId, const std::string &mapId) {
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
+        if (respondForInvalidId(projId, cb, "project_id") ||
+            respondForInvalidId(mapId, cb, "map_id")) return;
 
         try {
           roc::db::PostgresClient pg(connStr);
-          pg.execute("DELETE FROM maps WHERE id = '" + esc(mapId) + "'");
+          const auto access = checkProjectAccess(
+              pg, projId, (*p)["user_id"].asString(), (*p)["role"].asString());
+          if (respondForDeniedProject(access, cb)) return;
+          const auto map = pg.queryOneParams(
+              "SELECT id, image_url FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              {mapId, projId});
+          if (map.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Map not found"))); return; }
+          const auto bound = pg.queryOneParams(
+              "SELECT id FROM vehicles WHERE map_id = $1::uuid LIMIT 1", {mapId});
+          if (!bound.isNull()) {
+            cb(jsonResp(k409Conflict, makeResp(false, "Unbind vehicles before deleting this map")));
+            return;
+          }
+          pg.executeParams(
+              "DELETE FROM maps WHERE id = $1::uuid AND project_id = $2::uuid", {mapId, projId});
+
+          const auto imagePath = map["image_url"].asString();
+          const std::string prefix = "/static/maps/";
+          if (imagePath.rfind(prefix, 0) == 0 && imagePath.find("..") == std::string::npos) {
+            const auto diskPath = std::filesystem::path(mapStorageDirectory) /
+                                  std::filesystem::path(imagePath).filename();
+            std::error_code ec;
+            std::filesystem::remove(diskPath, ec);
+            if (ec) LOG_WARN << "Map file cleanup failed for " << diskPath << ": " << ec.message();
+          }
           cb(jsonResp(k200OK, makeResp(true, "Map deleted")));
         } catch (const std::exception &e) {
           LOG_ERROR << "Delete map: " << e.what();

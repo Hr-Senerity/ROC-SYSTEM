@@ -10,11 +10,7 @@ namespace roc::db {
 PostgresClient::PostgresClient(std::string connStr) : connStr_(std::move(connStr)) {}
 
 pqxx::connection PostgresClient::makeConn() const {
-  pqxx::connection c(connStr_);
-  if (!c.is_open()) {
-    throw std::runtime_error("PostgreSQL connection is not open");
-  }
-  return c;
+  return pqxx::connection(connStr_);
 }
 
 void PostgresClient::ping() const {
@@ -29,13 +25,42 @@ void PostgresClient::ping() const {
 
 Json::Value PostgresClient::rowToJson(const pqxx::row &row) {
   Json::Value obj;
-  for (size_t i = 0; i < row.size(); ++i) {
+  for (pqxx::row::size_type i = 0; i < row.size(); ++i) {
     std::string colName = row[i].name();
     if (row[i].is_null()) {
       obj[colName] = Json::nullValue;
     } else {
       try {
-        obj[colName] = row[i].as<std::string>();
+        const auto value = row[i].as<std::string>();
+        switch (row[i].type()) {
+          case 16:  // bool
+            obj[colName] = value == "t" || value == "true" || value == "1";
+            break;
+          case 20:  // int8
+          case 21:  // int2
+          case 23:  // int4
+            obj[colName] = static_cast<Json::Int64>(std::stoll(value));
+            break;
+          case 700:   // float4
+          case 701:   // float8
+          case 1700:  // numeric
+            obj[colName] = std::stod(value);
+            break;
+          case 114:   // json
+          case 3802: {  // jsonb
+            Json::CharReaderBuilder builder;
+            Json::Value parsed;
+            std::string error;
+            std::istringstream stream(value);
+            obj[colName] = Json::parseFromStream(builder, stream, &parsed, &error)
+                ? parsed
+                : Json::Value(value);
+            break;
+          }
+          default:
+            obj[colName] = value;
+            break;
+        }
       } catch (...) {
         obj[colName] = Json::nullValue;
       }
@@ -105,6 +130,19 @@ std::string PostgresClient::insertReturning(const std::string &sql) const {
   auto c = makeConn();
   pqxx::work w(c);
   auto r = w.exec(sql);
+  w.commit();
+  if (r.size() > 0 && r[0].size() > 0 && !r[0][0].is_null()) {
+    return r[0][0].as<std::string>();
+  }
+  return "";
+}
+
+std::string PostgresClient::insertReturningParams(
+    const std::string &sql,
+    const std::vector<std::string> &params) const {
+  auto c = makeConn();
+  pqxx::work w(c);
+  auto r = w.exec_params(sql, pqxx::prepare::make_dynamic_params(params));
   w.commit();
   if (r.size() > 0 && r[0].size() > 0 && !r[0][0].is_null()) {
     return r[0][0].as<std::string>();

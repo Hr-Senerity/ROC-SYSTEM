@@ -16,7 +16,9 @@ bool ProtocolBridge::ingest(const std::vector<uint8_t> &data, ProtocolType hint)
   if (ser) {
     auto status = ser->deserializeStatus(data);
     if (status) {
-      for (auto &cb : statusCallbacks_) cb(*status);
+      for (auto &cb : statusCallbacks_) {
+        if (!cb(*status)) return false;
+      }
       return true;
     }
     auto cmd = ser->deserializeCommand(data);
@@ -30,7 +32,9 @@ bool ProtocolBridge::ingest(const std::vector<uint8_t> &data, ProtocolType hint)
   if (hint == ProtocolType::JSON) {
     auto status = rocSerializer_->deserializeStatus(data);
     if (status) {
-      for (auto &cb : statusCallbacks_) cb(*status);
+      for (auto &cb : statusCallbacks_) {
+        if (!cb(*status)) return false;
+      }
       return true;
     }
     auto cmd = rocSerializer_->deserializeCommand(data);
@@ -44,7 +48,9 @@ bool ProtocolBridge::ingest(const std::vector<uint8_t> &data, ProtocolType hint)
   if (hint == ProtocolType::ROC) {
     auto status = jsonSerializer_->deserializeStatus(data);
     if (status) {
-      for (auto &cb : statusCallbacks_) cb(*status);
+      for (auto &cb : statusCallbacks_) {
+        if (!cb(*status)) return false;
+      }
       return true;
     }
   }

@@ -1,9 +1,9 @@
 #pragma once
 
 #include <drogon/WebSocketController.h>
-#include <drogon/PubSubService.h>
-#include <set>
-#include <mutex>
+#include <json/json.h>
+#include <string>
+#include <vector>
 
 namespace roc::ws {
 
@@ -22,12 +22,14 @@ class StatusWsController : public drogon::WebSocketController<StatusWsController
     WS_PATH_ADD("/ws/status");
   WS_PATH_LIST_END
 
-  // Broadcast a status update to all connected clients
-  static void broadcast(const std::string &json);
+  static void configure(std::string jwtSecret,
+                        std::string connStr,
+                        std::vector<std::string> allowedOrigins = {});
 
- private:
-  static std::set<drogon::WebSocketConnectionPtr> connections_;
-  static std::mutex mutex_;
+  static void broadcastVehicle(const std::string &eventType,
+                               const Json::Value &vehicle);
+  static void broadcastVehicleDeleted(const std::string &projectId,
+                                      const std::string &vehicleId);
 };
 
 }  // namespace roc::ws

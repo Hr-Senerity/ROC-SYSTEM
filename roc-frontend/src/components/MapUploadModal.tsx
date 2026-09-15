@@ -1,15 +1,33 @@
-import { useState, useRef } from 'react';
-import { Upload, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { ImagePlus, Upload } from 'lucide-react';
+import { apiRequest } from '../shared/api/client';
+import { Alert, AlertDescription } from './ui/alert';
+import { Button } from './ui/button';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from './ui/dialog';
+import { Input } from './ui/input';
 
 interface MapUploadModalProps {
   projectId: string;
   token: string;
-  apiBase: string;
   onClose: () => void;
   onUploaded: () => void;
 }
 
-export function MapUploadModal({ projectId, token, apiBase, onClose, onUploaded }: MapUploadModalProps) {
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUploadModalProps) {
   const [name, setName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
@@ -17,106 +35,112 @@ export function MapUploadModal({ projectId, token, apiBase, onClose, onUploaded 
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setFile(f);
+  const selectFile = async (selectedFile?: File) => {
+    if (!selectedFile) return;
     setError('');
-
-    const reader = new FileReader();
-    reader.onload = () => setPreview(reader.result as string);
-    reader.readAsDataURL(f);
-
-    if (!name) setName(f.name.replace(/\.[^.]+$/, ''));
+    if (!ALLOWED_IMAGE_TYPES.has(selectedFile.type)) {
+      setError('仅支持 PNG 或 JPEG 图片');
+      return;
+    }
+    if (selectedFile.size > MAX_IMAGE_BYTES) {
+      setError('图片不能超过 10 MB');
+      return;
+    }
+    try {
+      const dataUrl = await readDataUrl(selectedFile);
+      setFile(selectedFile);
+      setPreview(dataUrl);
+      if (!name.trim()) setName(selectedFile.name.replace(/\.[^.]+$/, ''));
+    } catch (readError) {
+      setError(readError instanceof Error ? readError.message : '读取文件失败');
+    }
   };
 
-  const handleUpload = async () => {
-    if (!file) { setError('请选择文件'); return; }
+  const upload = async () => {
+    if (!file || uploading) return;
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      setError('请输入地图名称');
+      return;
+    }
     setUploading(true);
+    setError('');
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const b64 = (reader.result as string).split(',')[1];
-        try {
-          const resp = await fetch(`${apiBase}/api/projects/${projectId}/maps/upload`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ name: name || 'Untitled', image_base64: b64 }),
-          });
-          const data = await resp.json();
-          if (data.ok) { onUploaded(); onClose(); }
-          else { setError(data.message || '上传失败'); }
-        } catch { setError('网络错误'); }
-        setUploading(false);
-      };
-      reader.readAsDataURL(file);
-    } catch { setError('读取文件失败'); setUploading(false); }
+      const dataUrl = preview || await readDataUrl(file);
+      const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+      await apiRequest(`/api/projects/${projectId}/maps/upload`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ name: normalizedName, image_base64: imageBase64 }),
+      });
+      onClose();
+      onUploaded();
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : '上传地图失败');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl text-slate-900">上传地图</h2>
-          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
-            <X className="w-5 h-5 text-slate-500" />
-          </button>
-        </div>
+    <Dialog open onOpenChange={(open) => { if (!open && !uploading) onClose(); }}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>上传地图</DialogTitle>
+          <DialogDescription>上传 PNG 或 JPEG 底图，单个文件最大 10 MB。</DialogDescription>
+        </DialogHeader>
 
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-center">
-            {error}
-          </div>
-        )}
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
 
         <div className="space-y-4">
-          <div>
-            <label className="block text-slate-700 mb-2">地图名称</label>
-            <input
-              type="text"
+          <div className="space-y-2">
+            <label htmlFor="map-name" className="text-sm font-medium">地图名称</label>
+            <Input
+              id="map-name"
+              maxLength={128}
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="例如: 一层仓库"
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如：一层仓库"
+              autoFocus
             />
           </div>
 
-          <div>
-            <label className="block text-slate-700 mb-2">地图图片</label>
-            <div
+          <div className="space-y-2">
+            <span className="text-sm font-medium">地图图片</span>
+            <button
+              type="button"
               onClick={() => fileRef.current?.click()}
-              className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-                file ? 'border-blue-400 bg-blue-50' : 'border-slate-300 hover:border-blue-500 hover:bg-blue-50'
-              }`}
+              className="flex min-h-48 w-full items-center justify-center overflow-hidden rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-center transition-colors hover:border-blue-500 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
               {preview ? (
-                <img src={preview} alt="预览" className="max-h-40 mx-auto rounded" />
+                <img src={preview} alt="待上传地图预览" className="max-h-64 max-w-full object-contain" />
               ) : (
-                <div>
-                  <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-                  <p className="text-slate-600">点击选择图片</p>
-                  <p className="text-slate-400 text-sm">支持 PNG/JPG，最大 10MB</p>
-                </div>
+                <span className="flex flex-col items-center text-slate-600">
+                  <ImagePlus className="mb-3 size-10 text-slate-400" aria-hidden="true" />
+                  <span className="font-medium">选择地图图片</span>
+                  <span className="mt-1 text-xs text-slate-500">PNG / JPEG · 最大 10 MB</span>
+                </span>
               )}
-            </div>
-            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/jpg" onChange={handleFileChange} hidden />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              onChange={(event) => void selectFile(event.target.files?.[0])}
+              className="sr-only"
+              aria-label="选择地图图片文件"
+            />
+            {file && <p className="text-xs text-slate-500">已选择：{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB</p>}
           </div>
         </div>
 
-        <div className="flex gap-3 mt-6">
-          <button onClick={onClose}
-            className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">
-            取消
-          </button>
-          <button onClick={handleUpload} disabled={uploading || !file}
-            className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:shadow-lg transition-all disabled:opacity-50">
-            {uploading ? '上传中...' : '上传'}
-          </button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={uploading} onClick={onClose}>取消</Button>
+          <Button disabled={!file || !name.trim() || uploading} onClick={() => void upload()}>
+            <Upload className="size-4" aria-hidden="true" />{uploading ? '上传中…' : '上传地图'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

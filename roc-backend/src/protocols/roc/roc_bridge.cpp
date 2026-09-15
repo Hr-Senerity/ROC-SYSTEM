@@ -5,6 +5,10 @@
 #include <drogon/drogon.h>
 #include <json/json.h>
 
+#include "db/PostgresClient.h"
+#include "utils/InputValidation.h"
+#include "utils/PasswordHash.h"
+
 // ROC Protocol Bridge — HTTP API endpoints for protocol message handling
 //
 // Provides endpoints for receiving robot status reports and sending control
@@ -30,15 +34,53 @@ Json::Value makeResp(bool ok, const std::string &msg = "") {
   return v;
 }
 
+std::string requestDeviceToken(const drogon::HttpRequestPtr &req) {
+  const auto header = req->getHeader("Authorization");
+  constexpr const char *prefix = "Device ";
+  if (header.rfind(prefix, 0) != 0) return {};
+  return header.substr(std::char_traits<char>::length(prefix));
+}
+
+bool deviceAuthorized(const drogon::HttpRequestPtr &req,
+                      const std::string &connStr,
+                      const std::string &robotId,
+                      const std::string &sharedToken,
+                      bool allowSharedToken) {
+  if (!roc::utils::isUuid(robotId)) return false;
+  const auto token = requestDeviceToken(req);
+  if (token.empty()) return false;
+  try {
+    roc::db::PostgresClient pg(connStr);
+    if (allowSharedToken && !sharedToken.empty() && token == sharedToken) {
+      return !pg.queryOneParams(
+          "SELECT id FROM vehicles WHERE id = $1::uuid", {robotId}).isNull();
+    }
+    return !pg.queryOneParams(
+        "SELECT id FROM vehicles WHERE id = $1::uuid AND device_enabled = true "
+        "AND device_token_hash = $2",
+        {robotId, roc::utils::sha256Hex(token)}).isNull();
+  } catch (const std::exception &error) {
+    LOG_ERROR << "Device authorization error: " << error.what();
+    return false;
+  }
+}
+
+drogon::HttpResponsePtr deviceAuthError() {
+  return jsonResp(makeResp(false, "Unauthorized device or vehicle"), 401);
+}
+
 }  // namespace
 
-void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
+void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge,
+                            const std::string &connStr,
+                            const std::string &deviceToken,
+                            bool allowSharedToken) {
   g_bridge = std::move(bridge);
 
   // POST /api/protocol/status — receive robot status (JSON format)
   drogon::app().registerHandler(
       "/api/protocol/status",
-      [](const drogon::HttpRequestPtr &req,
+      [connStr, deviceToken, allowSharedToken](const drogon::HttpRequestPtr &req,
          std::function<void(const drogon::HttpResponsePtr &)> &&cb) {
         auto json = req->getJsonObject();
         if (!json) {
@@ -50,8 +92,20 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
         auto bodyView = req->getBody(); std::string body(bodyView);
         std::vector<uint8_t> data(body.begin(), body.end());
 
-        if (!g_bridge->ingest(data, ProtocolType::JSON)) {
+        JsonSerializer serializer;
+        const auto status = serializer.deserializeStatus(data);
+        if (!status) {
           cb(jsonResp(makeResp(false, "Failed to parse status message"), 400));
+          return;
+        }
+        if (!deviceAuthorized(req, connStr, status->robot_id, deviceToken,
+                              allowSharedToken)) {
+          cb(deviceAuthError());
+          return;
+        }
+
+        if (!g_bridge->ingest(data, ProtocolType::JSON)) {
+          cb(jsonResp(makeResp(false, "Failed to apply status message"), 400));
           return;
         }
 
@@ -62,7 +116,7 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
   // POST /api/protocol/command — send control command (JSON format)
   drogon::app().registerHandler(
       "/api/protocol/command",
-      [](const drogon::HttpRequestPtr &req,
+      [connStr, deviceToken, allowSharedToken](const drogon::HttpRequestPtr &req,
          std::function<void(const drogon::HttpResponsePtr &)> &&cb) {
         auto json = req->getJsonObject();
         if (!json) {
@@ -73,10 +127,19 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
         auto bodyView = req->getBody(); std::string body(bodyView);
         std::vector<uint8_t> data(body.begin(), body.end());
 
-        if (!g_bridge->ingest(data, ProtocolType::JSON)) {
+        JsonSerializer serializer;
+        auto command = serializer.deserializeCommand(data);
+        if (!command) {
           cb(jsonResp(makeResp(false, "Failed to parse command message"), 400));
           return;
         }
+        if (!deviceAuthorized(req, connStr, command->robot_id, deviceToken,
+                              allowSharedToken)) {
+          cb(deviceAuthError());
+          return;
+        }
+
+        g_bridge->enqueueCommand(*command, ProtocolType::JSON);
 
         cb(jsonResp(makeResp(true, "Command accepted")));
       },
@@ -85,13 +148,25 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
   // POST /api/protocol/roc — receive ROC binary protocol messages
   drogon::app().registerHandler(
       "/api/protocol/roc",
-      [](const drogon::HttpRequestPtr &req,
+      [connStr, deviceToken, allowSharedToken](const drogon::HttpRequestPtr &req,
          std::function<void(const drogon::HttpResponsePtr &)> &&cb) {
         auto bodyView = req->getBody(); std::string body(bodyView);
         std::vector<uint8_t> data(body.begin(), body.end());
 
+        RocSerializer serializer;
+        const auto status = serializer.deserializeStatus(data);
+        if (!status) {
+          cb(jsonResp(makeResp(false, "Failed to parse ROC status message"), 400));
+          return;
+        }
+        if (!deviceAuthorized(req, connStr, status->robot_id, deviceToken,
+                              allowSharedToken)) {
+          cb(deviceAuthError());
+          return;
+        }
+
         if (!g_bridge->ingest(data, ProtocolType::ROC)) {
-          cb(jsonResp(makeResp(false, "Failed to parse ROC binary message"), 400));
+          cb(jsonResp(makeResp(false, "Failed to apply ROC status message"), 400));
           return;
         }
 
@@ -102,16 +177,21 @@ void registerProtocolBridge(std::shared_ptr<ProtocolBridge> bridge) {
   // GET /api/protocol/pending/{robot_id} — poll for queued commands
   drogon::app().registerHandler(
       "/api/protocol/pending/{robot_id}",
-      [](const drogon::HttpRequestPtr &,
+      [connStr, deviceToken, allowSharedToken](const drogon::HttpRequestPtr &req,
          std::function<void(const drogon::HttpResponsePtr &)> &&cb,
          const std::string &robotId) {
+        if (!deviceAuthorized(req, connStr, robotId, deviceToken,
+                              allowSharedToken)) {
+          cb(deviceAuthError());
+          return;
+        }
         auto cmds = g_bridge->pollCommands(robotId);
         Json::Value resp;
         resp["ok"] = true;
         resp["robot_id"] = robotId;
         resp["commands"] = Json::arrayValue;
         for (auto &c : cmds) resp["commands"].append(c);
-        cb(jsonResp(makeResp(true, "")));
+        cb(jsonResp(resp));
       },
       {drogon::Get, drogon::Options});
 
