@@ -5,6 +5,8 @@ project(roc_backend LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
 # Drogon + libpqxx + OpenSSL + jsoncpp
 find_package(Drogon CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -59,3 +61,12 @@ target_link_libraries(roc-backend-server PRIVATE
   OpenSSL::SSL
   OpenSSL::Crypto
 )
+
+if(BUILD_TESTING)
+  add_executable(roc-serializer-tests
+    tests/RocSerializerTests.cpp
+    src/protocols/RocSerializer.cpp
+  )
+  target_include_directories(roc-serializer-tests PRIVATE src)
+  add_test(NAME roc-serializer-tests COMMAND roc-serializer-tests)
+endif()

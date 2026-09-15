@@ -1,9 +1,95 @@
 #include "protocols/RocSerializer.h"
 
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace roc::protocol {
+
+namespace {
+
+class PayloadReader {
+ public:
+  explicit PayloadReader(const std::vector<uint8_t> &data) : data_(data) {}
+
+  bool readU16(uint16_t &value) {
+    if (!canRead(2)) return false;
+    value = (static_cast<uint16_t>(data_[offset_]) << 8) |
+            static_cast<uint16_t>(data_[offset_ + 1]);
+    offset_ += 2;
+    return true;
+  }
+
+  bool readU32(uint32_t &value) {
+    if (!canRead(4)) return false;
+    value = (static_cast<uint32_t>(data_[offset_]) << 24) |
+            (static_cast<uint32_t>(data_[offset_ + 1]) << 16) |
+            (static_cast<uint32_t>(data_[offset_ + 2]) << 8) |
+            static_cast<uint32_t>(data_[offset_ + 3]);
+    offset_ += 4;
+    return true;
+  }
+
+  bool readI32(int32_t &value) {
+    uint32_t bits = 0;
+    if (!readU32(bits)) return false;
+    std::memcpy(&value, &bits, sizeof(value));
+    return true;
+  }
+
+  bool readF64(double &value) {
+    if (!canRead(8)) return false;
+    uint64_t bits = 0;
+    for (size_t i = 0; i < 8; ++i) {
+      bits = (bits << 8) | data_[offset_ + i];
+    }
+    offset_ += 8;
+    std::memcpy(&value, &bits, sizeof(value));
+    return true;
+  }
+
+  bool readBool(bool &value) {
+    if (!canRead(1)) return false;
+    value = data_[offset_++] != 0;
+    return true;
+  }
+
+  bool readString(std::string &value) {
+    uint16_t length = 0;
+    if (!readU16(length) || !canRead(length)) return false;
+    if (length == 0) {
+      value.clear();
+    } else {
+      value.assign(reinterpret_cast<const char *>(data_.data() + offset_), length);
+    }
+    offset_ += length;
+    return true;
+  }
+
+  bool empty() const { return offset_ == data_.size(); }
+
+ private:
+  bool canRead(size_t length) const {
+    return length <= data_.size() - offset_;
+  }
+
+  const std::vector<uint8_t> &data_;
+  size_t offset_{0};
+};
+
+uint16_t headerU16(const std::vector<uint8_t> &data, size_t offset) {
+  return (static_cast<uint16_t>(data[offset]) << 8) |
+         static_cast<uint16_t>(data[offset + 1]);
+}
+
+uint32_t headerU32(const std::vector<uint8_t> &data, size_t offset) {
+  return (static_cast<uint32_t>(data[offset]) << 24) |
+         (static_cast<uint32_t>(data[offset + 1]) << 16) |
+         (static_cast<uint32_t>(data[offset + 2]) << 8) |
+         static_cast<uint32_t>(data[offset + 3]);
+}
+
+}  // namespace
 
 // ---------- helpers ----------
 
@@ -32,6 +118,9 @@ void RocSerializer::writeI32(std::vector<uint8_t> &buf, int32_t v) {
 }
 
 void RocSerializer::writeStr(std::vector<uint8_t> &buf, const std::string &s) {
+  if (s.size() > std::numeric_limits<uint16_t>::max()) {
+    throw std::length_error("ROC string exceeds uint16 length limit");
+  }
   writeU16(buf, static_cast<uint16_t>(s.size()));
   buf.insert(buf.end(), s.begin(), s.end());
 }
@@ -40,46 +129,12 @@ void RocSerializer::writeBool(std::vector<uint8_t> &buf, bool v) {
   buf.push_back(v ? 1 : 0);
 }
 
-uint32_t RocSerializer::readU32(const uint8_t *&p) {
-  uint32_t v = (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-               (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
-  p += 4;
-  return v;
-}
-
-uint16_t RocSerializer::readU16(const uint8_t *&p) {
-  uint16_t v = (static_cast<uint16_t>(p[0]) << 8) | static_cast<uint16_t>(p[1]);
-  p += 2;
-  return v;
-}
-
-double RocSerializer::readF64(const uint8_t *&p) {
-  uint64_t bits = 0;
-  for (int i = 0; i < 8; ++i) bits = (bits << 8) | p[i];
-  p += 8;
-  double v;
-  std::memcpy(&v, &bits, sizeof(v));
-  return v;
-}
-
-int32_t RocSerializer::readI32(const uint8_t *&p) {
-  return static_cast<int32_t>(readU32(p));
-}
-
-std::string RocSerializer::readStr(const uint8_t *&p) {
-  uint16_t len = readU16(p);
-  std::string s(reinterpret_cast<const char *>(p), len);
-  p += len;
-  return s;
-}
-
-bool RocSerializer::readBool(const uint8_t *&p) {
-  return *(p++) != 0;
-}
-
 // ---------- pack / unpack ----------
 
 std::vector<uint8_t> RocSerializer::pack(RocMsgType type, const std::vector<uint8_t> &payload) {
+  if (payload.size() > std::numeric_limits<uint32_t>::max()) {
+    throw std::length_error("ROC payload exceeds uint32 length limit");
+  }
   std::vector<uint8_t> buf;
   writeU32(buf, ROC_MAGIC);
   writeU16(buf, static_cast<uint16_t>(type));
@@ -90,15 +145,14 @@ std::vector<uint8_t> RocSerializer::pack(RocMsgType type, const std::vector<uint
 
 std::optional<RocSerializer::UnpackResult> RocSerializer::unpack(const std::vector<uint8_t> &data) {
   if (data.size() < HEADER_SIZE) return std::nullopt;
-  const uint8_t *p = data.data();
-  uint32_t magic = readU32(p);
+  const uint32_t magic = headerU32(data, 0);
   if (magic != ROC_MAGIC) return std::nullopt;
-  uint16_t typeVal = readU16(p);
-  uint32_t len = readU32(p);
-  if (data.size() < HEADER_SIZE + len) return std::nullopt;
+  const uint16_t typeVal = headerU16(data, 4);
+  const uint32_t len = headerU32(data, 6);
+  if (static_cast<size_t>(len) != data.size() - HEADER_SIZE) return std::nullopt;
   UnpackResult r;
   r.type = static_cast<RocMsgType>(typeVal);
-  r.payload = std::vector<uint8_t>(p, p + len);
+  r.payload.assign(data.begin() + HEADER_SIZE, data.end());
   return r;
 }
 
@@ -123,27 +177,20 @@ std::vector<uint8_t> RocSerializer::serializeStatus(const RobotStatus &s) {
 std::optional<RobotStatus> RocSerializer::deserializeStatus(const std::vector<uint8_t> &data) {
   auto u = unpack(data);
   if (!u || u->type != RocMsgType::STATUS_REPORT) return std::nullopt;
-  const uint8_t *p = u->payload.data();
-  const uint8_t *end = p + u->payload.size();
-  try {
-    RobotStatus s;
-    s.robot_id = readStr(p);
-    s.online = readBool(p);
-    s.cpu_usage = readF64(p);
-    s.memory_usage = readF64(p);
-    s.battery_level = readI32(p);
-    s.localization_confidence = readF64(p);
-    s.position_x = readF64(p);
-    s.position_y = readF64(p);
-    s.position_theta = readF64(p);
-    s.velocity_linear = readF64(p);
-    s.velocity_angular = readF64(p);
-    s.timestamp = std::chrono::system_clock::now();
-    if (p > end) return std::nullopt;
-    return s;
-  } catch (...) {
+  PayloadReader reader(u->payload);
+  RobotStatus s;
+  if (!reader.readString(s.robot_id) || !reader.readBool(s.online) ||
+      !reader.readF64(s.cpu_usage) || !reader.readF64(s.memory_usage) ||
+      !reader.readI32(s.battery_level) ||
+      !reader.readF64(s.localization_confidence) ||
+      !reader.readF64(s.position_x) || !reader.readF64(s.position_y) ||
+      !reader.readF64(s.position_theta) ||
+      !reader.readF64(s.velocity_linear) ||
+      !reader.readF64(s.velocity_angular) || !reader.empty()) {
     return std::nullopt;
   }
+  s.timestamp = std::chrono::system_clock::now();
+  return s;
 }
 
 std::vector<uint8_t> RocSerializer::serializeCommand(const ControlCommand &c) {
@@ -163,24 +210,17 @@ std::vector<uint8_t> RocSerializer::serializeCommand(const ControlCommand &c) {
 std::optional<ControlCommand> RocSerializer::deserializeCommand(const std::vector<uint8_t> &data) {
   auto u = unpack(data);
   if (!u || u->type != RocMsgType::CONTROL_CMD) return std::nullopt;
-  const uint8_t *p = u->payload.data();
-  const uint8_t *end = p + u->payload.size();
-  try {
-    ControlCommand c;
-    c.robot_id = readStr(p);
-    c.command_type = readStr(p);
-    c.linear_x = readF64(p);
-    c.linear_y = readF64(p);
-    c.linear_z = readF64(p);
-    c.angular_x = readF64(p);
-    c.angular_y = readF64(p);
-    c.angular_z = readF64(p);
-    c.task_params = readStr(p);
-    if (p > end) return std::nullopt;
-    return c;
-  } catch (...) {
+  PayloadReader reader(u->payload);
+  ControlCommand c;
+  if (!reader.readString(c.robot_id) ||
+      !reader.readString(c.command_type) ||
+      !reader.readF64(c.linear_x) || !reader.readF64(c.linear_y) ||
+      !reader.readF64(c.linear_z) || !reader.readF64(c.angular_x) ||
+      !reader.readF64(c.angular_y) || !reader.readF64(c.angular_z) ||
+      !reader.readString(c.task_params) || !reader.empty()) {
     return std::nullopt;
   }
+  return c;
 }
 
 }  // namespace roc::protocol

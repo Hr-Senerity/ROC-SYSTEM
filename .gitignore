@@ -14,8 +14,20 @@ roc-backend/lib/
 .env
 .env.local
 .env.*.local
+*.env
+*.env.*
+!*.env.example
 docker/compose/.env
 *.log
+
+# 密钥、证书私钥和本地凭据
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials*.json
 
 # 部署配置（不提交真实环境）
 scripts/config/deploy.env
@@ -73,6 +85,10 @@ coverage/
 *.gcda
 *.gcno
 
+# 本地验证文档和测试机脚本（不提交）
+docs/
+scripts/test/
+
 # 日志文件
 logs/
 *.log
@@ -85,3 +101,4 @@ logs/
 
 # Codex project memory and plans
 .codex/
+plan.md

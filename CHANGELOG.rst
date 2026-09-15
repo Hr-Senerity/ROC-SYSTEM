@@ -13,52 +13,50 @@
 
 新增
 ----
-- 完整 C++ 后端（Drogon），24 个 REST API 端点 + WebSocket 实时通信
-- JWT 认证体系（HMAC-SHA256），super_admin / regular 双角色权限分离
-- SHA-256 + 随机盐密码哈希，密码修改 API
-- 超级管理员 API：用户管理 CRUD、系统统计、用户车辆查询
-- 项目 CRUD API + 项目地图接口（列表/上传/重命名/删除）
-- 车辆管理 API（注册/状态更新/指标上报/删除），支持部分字段更新
-- 地图坐标系（coordinate_origin_x/y）+ 路网数据（road_network JSONB）
-- JSON 协议序列化器 + ROC 二进制协议序列化器
-- 协议桥接器（ProtocolBridge）：消息队列、Robot 轮询指令（GET /api/protocol/pending/{id}）
-- 协议 HTTP 端点：POST /api/protocol/status、/api/protocol/command、/api/protocol/roc
-- WebSocket 实时推送（/ws/status）
-- 取消 ROS 协议支持，专注 ROC + JSON
-- 前端完整认证接入：登录/注册/修改密码调用真实 API
-- 前端路由权限守卫：ProtectedRoute / SuperAdminRoute
-- 超级管理员前端页面：用户列表（分页/搜索/筛选）、停用/启用/删除、详情、统计
-- 项目页面接入真实 API，清除所有 mock 数据（新用户空白起始状态）
-- 个人中心重写：数据展示、密码修改、通知设置
-- HomePage 导航菜单"用户管理"入口（仅 super_admin 可见）
-- 地图放大详情页（MapDetailPage），5 层架构：网格底图 → 用户地图 → 路网 → 路径高亮 → 车辆标记
-- 地图响应式画布（ResizeObserver，400-1200px）+ 光标锚定缩放
-- 地图标记缩放补偿（视觉大小恒定）+ 弹出窗口边界检测
-- 地图上传功能：后端 multipart API + 前端 MapUploadModal（预览/命名）
-- 路网数据从地图加载并动态渲染，支持 CSV 导出 (x,y,z,qx,qy,qz,qw)
-- 车辆悬浮窗：位置/速度/IP/电量/CPU/内存/定位 + 边界安全定位
-- WebSocket 实时车辆状态更新（5 秒自动重连）
-- 移除"我的路径"侧边栏 → 路径高亮改为车辆点击触发
-- Robot 数据模型扩展：position{x,y,theta}、velocity{linear,angular}、deliveryPath[]
-- 共享类型文件 types/robot.ts
-- 完整数据库 Schema：users / projects / maps / vehicles，含坐标原点和路网 JSONB 字段
-- 默认超级管理员账户：admin / [REDACTED_DEFAULT_PASSWORD]
-- Docker Compose 编排（postgres + backend + frontend），健康检查 + 网络隔离
-- 前端 Dockerfile 支持 VITE_API_BASE_URL 构建参数（无默认值防缓存）
-- 后端部署脚本新增 JWT_SECRET / JWT_EXPIRE_SECONDS 环境变量
-- deploy-all-docker.sh / deploy-all.sh 编排脚本
-- deploy.env.example 新增 JWT 配置 + 跨服务器分离部署场景文档
-- shadcn/ui Button + Input 组件集成
+- C++ Drogon 后端、PostgreSQL 数据模型、REST API 与 WebSocket 状态通道。
+- ``super_admin`` / ``regular`` 双角色认证和平台级账户管理边界。
+- 项目、地图、车辆的归属校验、默认地图事务及跨项目绑定约束。
+- 地图坐标元数据、路网 JSONB、受保护的地图图片读取和车辆遥测版本号。
+- 每车独立 Device token 的签发、轮换、撤销和摘要存储。
+- JSON 状态/控制接口，以及 ROC 二进制 ``STATUS_REPORT`` 接入。
+- WebSocket 首帧 JWT 认证、项目订阅、权限复核、心跳、重连和 REST 兜底。
+- 浅色公开首页、登录/注册页和统一的登录后运营工作台导航。
+- 项目地图、车辆列表、地图监控、个人中心和平台管理页面。
+- 统一 SVG 坐标空间、矩形视口适配、锚点缩放和平移交互。
+- Docker Compose、分离部署配置样例、健康检查和数据库迁移脚本。
+- C++ ROC golden frame、往返编码及逐字节截断边界测试。
+
+变更
+----
+- 公开注册仅创建普通用户；全新数据库不再预置固定管理员账号或口令。
+- 超级管理员可查看全平台账户及带所有者标识的项目、车辆；普通用户只能访问自己的资源。
+- 地图上传统一为 JSON Base64 PNG/JPEG，最大 10 MB；图片不再通过匿名静态路径公开。
+- ROC Payload 明确为固定字段顺序而非 TLV；单次请求只接受一个长度完全匹配的完整帧。
+- 前端 API 默认使用同源路径，开发代理和生产构建地址通过环境变量配置。
+- 文档指南同步设备凭据、JSON/ROC、HTTP 响应和 WebSocket 接入语义。
 
 修复
 ----
-- MapDetailPage 底图：灰色网格底层 + 用户地图区域 + 路网上层 + 车辆顶层
-- 地图卡片点击跳转 MapDetailPage
-- VITE_API_BASE_URL 默认值导致浏览器请求 localhost:8080
-- libpqxx v6 API 兼容（row[i].name()）
-- Drogon v1 兼容（setCustomConfig → 环境变量）
-- json/jsonResp 函数命名冲突
-- init.sql 默认管理员密码哈希修正（password + salt）
+- 修复非法 UUID 导致 PostgreSQL 类型转换错误泄漏为 HTTP 500 的问题。
+- 修复跨用户项目、地图、车辆、图片及管理员接口的越权访问。
+- 修复地图删除、默认地图和车辆绑定时的跨项目或引用冲突。
+- 修复矩形地图、缩放锚点、视口尺寸变化和旧遥测快照覆盖新状态的问题。
+- 修复窄屏文档、认证页面和平台管理页面的横向溢出与布局问题。
+- 修复 ROC 截断字段、伪造长度及尾随字节可能造成的越界读取。
+- 修复 libpqxx v6、Drogon v1、容器健康检查和 Nginx 动态解析兼容问题。
+
+安全
+----
+- 账户 JWT 与设备凭据分离；设备明文凭据只在签发时返回一次。
+- WebSocket 在认证前不接收业务广播，并对项目订阅执行授权检查。
+- 上传地图只经 Bearer 鉴权接口返回，关闭旧 ``/static`` 匿名回退。
+- 数据库初始化不包含固定密码、密码哈希或可直接登录的默认账户。
+- 旧共享 Device token 默认关闭，仅保留显式迁移开关。
+
+移除
+----
+- 移除 ROS 协议入口、前端 mock 业务数据和无持久化能力的通知设置。
+- 移除拖拽拼图验证、占位密码找回、占位政策链接和固定默认管理员。
 
 ==========
 [1.0.0] - 2024-12-26

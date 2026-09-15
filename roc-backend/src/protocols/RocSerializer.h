@@ -40,12 +40,6 @@ class RocSerializer : public IProtocolSerializer {
   void writeStr(std::vector<uint8_t> &buf, const std::string &s);
   void writeBool(std::vector<uint8_t> &buf, bool v);
 
-  uint32_t readU32(const uint8_t *&p);
-  uint16_t readU16(const uint8_t *&p);
-  double readF64(const uint8_t *&p);
-  int32_t readI32(const uint8_t *&p);
-  std::string readStr(const uint8_t *&p);
-  bool readBool(const uint8_t *&p);
 };
 
 }  // namespace roc::protocol

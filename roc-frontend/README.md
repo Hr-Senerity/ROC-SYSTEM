@@ -48,4 +48,15 @@ The production output directory is `build/`.
 
 Vehicle state uses authenticated project-scoped WebSocket subscriptions. Events are merged by telemetry version; reconnection uses exponential backoff and project-scoped REST polling remains the fallback.
 
-See [`../plan.md`](../plan.md) for the implementation plan and [`../docs/frontend/verification.md`](../docs/frontend/verification.md) for verified results and remaining release blockers.
+## Device integration guide
+
+`/guide` and `/protocols` render the same current interface reference in public and authenticated layouts. It documents:
+
+- account JWT versus per-vehicle Device token authentication;
+- JSON status, command, and pending-command endpoints;
+- the ROC binary `STATUS_REPORT` frame and its current HTTP boundary;
+- project-scoped WebSocket authentication, subscription, events, and heartbeat.
+
+Do not place real credentials in examples. The backend's byte-level ROC definition is in [`../roc-backend/src/protocols/roc/README.md`](../roc-backend/src/protocols/roc/README.md).
+
+See the [repository README](../README.md) for architecture, API details, deployment guidance, and current limitations. Local verification records, test-host scripts, and the development plan are intentionally not part of the published repository.

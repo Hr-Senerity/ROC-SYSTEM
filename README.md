@@ -78,7 +78,7 @@ graph TB
 
 | 层 | 技术 | 版本 | 用途 |
 |---|---|---|---|
-| 前端框架 | React + TypeScript | 18.3 / 5.3 | SPA 页面组件 |
+| 前端框架 | React + TypeScript | 18.3 / 5.9 | SPA 页面组件 |
 | 构建工具 | Vite | 6.3.5 | 开发服务器 + 生产构建 |
 | CSS | Tailwind CSS | v4 | 原子化样式 |
 | UI 组件库 | shadcn/ui (Radix + Lucide) | — | 49 个可访问组件 |
@@ -160,7 +160,7 @@ ROC-SYSTEM/
 │           ├── ProfilePage.tsx             # 个人信息 · 密码修改
 │           ├── ProjectsPage.tsx            # 项目列表 CRUD
 │           ├── ProjectDetailPage.tsx       # 项目详情 · 地图列表
-│           ├── MapDetailPage.tsx           # 5 层 Canvas 地图 · 实时车辆 · 路网
+│           ├── MapDetailPage.tsx           # 统一 SVG 地图 · 实时车辆 · 路网
 │           ├── MapUploadModal.tsx          # 地图上传弹窗
 │           ├── VehiclePopup.tsx            # 车辆详情悬浮窗
 │           ├── PerformanceMonitor.tsx      # 性能监控面板
@@ -246,19 +246,23 @@ Robot System
 ### 协议消息路由
 
 ```
-POST /api/protocol/status  (JSON)        → ProtocolBridge::ingest(JSON hint)
-POST /api/protocol/command (JSON)        → ProtocolBridge::ingest(JSON hint)
-POST /api/protocol/roc     (binary)      → ProtocolBridge::ingest(ROC hint)
+POST /api/protocol/status  (JSON status)
+  → JSON 状态预解析 → Device token/robot_id 校验
+  → ProtocolBridge::ingest(JSON) → 持久化遥测 → 项目级 WebSocket 事件
 
-ingest() 流程:
-  1. 用 hinted serializer 尝试 deserializeStatus → 成功则触发 statusCallbacks
-  2. 用 hinted serializer 尝试 deserializeCommand → 成功则触发 commandCallbacks
-  3. 失败则 fallback：JSON 源尝试 ROC，ROC 源尝试 JSON
-  4. 全部失败返回 false
+POST /api/protocol/command (JSON command)
+  → JSON 指令预解析 → Device token/robot_id 校验
+  → ProtocolBridge::enqueueCommand(JSON)
+
+POST /api/protocol/roc     (ROC binary status)
+  → STATUS_REPORT 预解析 → Device token/robot_id 校验
+  → ProtocolBridge::ingest(ROC) → 持久化遥测 → 项目级 WebSocket 事件
 
 GET /api/protocol/pending/{robot_id}      → ProtocolBridge::pollCommands()
-  Robot 轮询接口，返回并清空该 robot_id 的待执行指令队列
+  → 返回并清空该 robot_id 的内存待执行指令队列
 ```
+
+HTTP 入口会先按其声明格式完成解析和设备授权，再调用协议桥；因此协议桥内部的 serializer fallback 不代表 HTTP 接口可以混传内容类型。当前 `/api/protocol/roc` 只接受 ROC `STATUS_REPORT`，二进制控制帧和心跳尚未开放 HTTP 接入。待执行指令队列不持久化，服务重启后不会保留。
 
 ### 前端路由守卫
 
@@ -287,32 +291,31 @@ Register/Login
 ### 实时状态流
 
 ```
-Robot reports status (via HTTP or direct protocol)
+Robot reports status (via JSON or ROC HTTP endpoint)
   → 单车 Device token 与 robot_id(UUID) 白名单校验
     → ProtocolBridge::ingest()
-    → JsonSerializer::deserializeStatus() → RobotStatus struct
+    → JsonSerializer/RocSerializer::deserializeStatus() → RobotStatus struct
       → onStatusReport callback
         → 数据库事务更新车辆状态并递增 telemetry_version
         → 仅向订阅车辆所属项目的已认证 WebSocket 客户端推送
           → 前端按 version 合并事件；断线时每 10 秒 REST 轮询兜底
 ```
 
-### 地图可视化 — 5 层 Canvas 叠加
+### 地图可视化 — 统一 SVG 坐标空间
 
 ```
-Canvas 2D (响应式 300–1200px, ResizeObserver 自适应)
-
-Layer 1 (底): 灰色网格背景 (缩放无关)
-Layer 2:     用户上传地图图片 (Image 对象, drawImage)
-Layer 3:     路网数据 (road_network JSONB, 线段 + 节点圆点)
-Layer 4:     配送路径高亮 (选中车辆, deliveryPath[], 箭头方向)
-Layer 5 (顶): 车辆实时标记 (圆形 + 方向指示器, 缩放补偿恒定视觉大小)
-            + 车辆悬浮窗 (VehiclePopup, 边界安全检测)
+容器尺寸 → ResizeObserver → 矩形 viewport
+地图元数据 → worldToMap() → 图片像素坐标
+fitScale + zoom + pan → 单一 SVG <g transform>
+  ├── 鉴权加载的地图 <image>
+  ├── road_network 路网 <line>
+  └── 当前地图车辆标记与方向
 
 交互:
-  - 光标锚定缩放: 鼠标位置为中心点, wheel 事件缩放系数 1.1/0.9
-  - 车辆点击: 高亮 deliveryPath + 弹出 VehiclePopup
-  - 路网导出: CSV 格式 (x,y,z,qx,qy,qz,qw) 下载
+  - 光标锚定缩放、pointer capture 平移、适应视图和专注模式
+  - 桌面三栏显示车辆列表/地图/详情；窄屏使用车辆选择器和详情浮层
+  - 选中状态保存 vehicle ID，详情持续从实时 store 派生
+  - 路网导出为 CSV（from_x,from_y,to_x,to_y）
 ```
 
 ## 数据库 Schema
@@ -442,8 +445,8 @@ erDiagram
 |---|---|---|---|
 | `/api/protocol/status` | POST | Device token | 接收机器人状态上报（JSON） |
 | `/api/protocol/command` | POST | Device token | 写入待执行控制指令（JSON） |
-| `/api/protocol/roc` | POST | Device token | 接收 ROC 二进制协议消息 |
-| `/api/protocol/pending/{robot_id}` | GET | Device token | Robot 轮询并取走待执行指令 |
+| `/api/protocol/roc` | POST | Device token | 接收 ROC 二进制状态帧；当前仅支持 `STATUS_REPORT` |
+| `/api/protocol/pending/{robot_id}` | GET | Device token | Robot 读取并清空待执行内存指令队列 |
 
 协议接口要求 `Authorization: Device <token>`，消息中的 `robot_id` 必须是该凭据对应的车辆 UUID。平台仅保存凭据 SHA-256 摘要。`DEVICE_TOKEN` 只作为迁移期开关：仅当 `DEVICE_ALLOW_SHARED_TOKEN=true` 时允许旧共享凭据，生产环境应保持关闭并启用 TLS。
 
@@ -452,6 +455,8 @@ erDiagram
 | 端点 | 协议 | 说明 |
 |---|---|---|
 | `/ws/status` | WebSocket | 首帧发送 `{type:"authenticate",token:"<JWT>"}`，认证后以 `{type:"subscribe",project_id:"<UUID>"}` 订阅有权限的项目；断线自动重连并由 REST 轮询兜底 |
+
+服务端连接后先发送 `hello`。客户端须在 5 秒内完成账户 JWT 认证；认证后可发送 `subscribe`、`unsubscribe` 和 `ping`。订阅成功返回项目 `snapshot`，后续事件包括 `vehicle_created`、`vehicle_updated`、`vehicle_deleted`、`pong` 和结构化 `error`。WebSocket 使用账户 JWT，不使用 Device token。
 
 ## ROC 二进制协议
 
@@ -469,11 +474,13 @@ ROC (Robot Operation Control) 是为机器人运营控制设计的轻量级二�
 | 字段 | 大小 | 说明 |
 |---|---|---|
 | Header (Magic) | 4 bytes | `0x524F4320` = "`ROC `" |
-| Type | 2 bytes | `0x01` STATUS_REPORT / `0x02` CONTROL_CMD / `0x03` HEARTBEAT |
+| Type | 2 bytes | `0x0001` STATUS_REPORT / `0x0002` CONTROL_CMD / `0x0003` HEARTBEAT |
 | Length | 4 bytes | Data 字段的字节长度 (大端) |
 | Data | N bytes | 类型特定的序列化 payload |
 
-**Payload 格式**: 每字段以 `[2-byte fieldId][N-byte value]` 的 TLV 编码，支持 string / uint32 / int32 / float64 / bool 类型。
+整数、字符串长度及 IEEE 754 `float64` 均按网络字节序（大端）编码。字符串编码为 `[uint16 字节长度][UTF-8 数据]`，Payload 是固定字段顺序，不是 TLV。单次 `/api/protocol/roc` 请求必须恰好包含一帧，声明长度与实际 Payload 不一致、字段截断或存在尾随字节时返回 HTTP 400。
+
+`STATUS_REPORT` Payload 顺序：`robot_id`、`online(uint8)`、`cpu_usage(float64)`、`memory_usage(float64)`、`battery_level(int32)`、`localization_confidence(float64)`、`position_x/y/theta(float64)`、`velocity_linear/angular(float64)`。完整二进制定义与当前开放边界见 [`roc-backend/src/protocols/roc/README.md`](roc-backend/src/protocols/roc/README.md)。
 
 ## 部署架构
 
@@ -500,7 +507,7 @@ ROC (Robot Operation Control) 是为机器人运营控制设计的轻量级二�
           frontend:  ${FRONTEND_DOCKER_HOST_PORT:-3000} → 80
 ```
 
-**网络隔离**: 三服务通过 `roc-net` bridge 网络内部互通，仅映射端口对外暴露。`backend` 依赖 `postgres` 的 health check，`postgres` 初始化脚本自动创建 schema 和默认管理员。
+**网络隔离**: 三服务通过 `roc-net` bridge 网络内部互通，仅映射配置中明确启用的主机端口。`backend` 依赖 `postgres` 的 health check；`postgres` 初始化脚本创建 schema，但不会创建带固定密码的默认管理员。
 
 ### 分离部署
 
@@ -510,7 +517,7 @@ ROC (Robot Operation Control) 是为机器人运营控制设计的轻量级二�
 
 ### 环境要求
 
-- Node.js 18+
+- Node.js 20+
 - PostgreSQL 16+
 - Docker & Docker Compose
 - C++ 编译器 (GCC/Clang) + CMake 3.16+
