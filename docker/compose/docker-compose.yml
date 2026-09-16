@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-roc_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in docker/compose/.env}
       POSTGRES_DB: ${DB_NAME:-roc_db}
     ports:
       - "${POSTGRES_DOCKER_HOST_PORT:-5432}:5432"
@@ -48,7 +48,7 @@ services:
       DB_PORT: "5432"
       DB_NAME: ${DB_NAME:-roc_db}
       DB_USER: ${DB_USER:-roc_user}
-      DB_PASSWORD: ${DB_PASSWORD:-change_me}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in docker/compose/.env}
       JWT_SECRET: ${JWT_SECRET:-roc-system-default-secret-change-in-production}
       JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
       DEVICE_TOKEN: ${DEVICE_TOKEN:-}

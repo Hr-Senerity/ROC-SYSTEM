@@ -64,9 +64,10 @@ stop_container() {
 
 run_container() {
   load_backend_cfg
-  require_vars DB_HOST DB_PORT DB_NAME DB_USER
+  require_vars DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
   if [[ -z "${DB_PASSWORD_VAL}" ]]; then
-    log_warn "DB_PASSWORD 未设置（建议放在 scripts/config/secrets.env）"
+    log_error "DB_PASSWORD 未设置；请在 scripts/config/secrets.env 中配置强随机密码"
+    exit 1
   fi
 
   # 后端监听（容器内）

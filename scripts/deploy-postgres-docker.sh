@@ -36,7 +36,14 @@ load_pg_cfg() {
 
     DB_NAME="${DB_NAME:-roc_db}"
     DB_USER="${DB_USER:-roc_user}"
-    DB_PASSWORD="${DB_PASSWORD:-roc_password}"
+    DB_PASSWORD="${DB_PASSWORD:-}"
+}
+
+require_database_password() {
+    if [[ -z "${DB_PASSWORD}" ]]; then
+        log_error "DB_PASSWORD 未设置；请在 scripts/config/secrets.env 中配置强随机密码"
+        exit 1
+    fi
 }
 
 # 构建 Docker 镜像
@@ -68,6 +75,7 @@ stop_container() {
 # 运行 Docker 容器
 run_container() {
     load_pg_cfg
+    require_database_password
     log_info "启动 PostgreSQL 容器: ${CONTAINER_NAME}"
     
     # 检查镜像是否存在

@@ -112,10 +112,10 @@ stop_postgres() {
 # 创建数据库和用户
 create_database() {
     load_pg_local_cfg
-    require_vars DB_NAME DB_USER
+    require_vars DB_NAME DB_USER DB_PASSWORD
     if [[ -z "${DB_PASSWORD_VAL}" ]]; then
-      log_warn "DB_PASSWORD 未设置（建议放在 scripts/config/secrets.env）"
-      DB_PASSWORD_VAL="roc_password"
+      log_error "DB_PASSWORD 未设置；请在 scripts/config/secrets.env 中配置强随机密码"
+      exit 1
     fi
 
     log_info "创建数据库和用户..."

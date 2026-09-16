@@ -6,7 +6,7 @@ FROM postgres:16-alpine
 # 设置环境变量
 ENV POSTGRES_DB=roc_db
 ENV POSTGRES_USER=roc_user
-ENV POSTGRES_PASSWORD=roc_password
+# POSTGRES_PASSWORD 必须在运行容器时通过环境变量或 secret 注入，镜像不内置密码。
 ENV PGDATA=/var/lib/postgresql/data/pgdata
 
 # 复制初始化脚本
