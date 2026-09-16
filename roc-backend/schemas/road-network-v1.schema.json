@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:roc:road-network:v1",
+  "title": "ROC road network v1",
+  "type": "object",
+  "required": ["schema_version", "coordinate_mode", "nodes", "edges"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "coordinate_mode": { "enum": ["metric", "legacy-normalized"] },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "x", "y", "kind", "label"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "kind": { "enum": ["waypoint"] },
+        "label": { "type": "string", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "direction"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "from": { "$ref": "#/$defs/identifier" },
+        "to": { "$ref": "#/$defs/identifier" },
+        "direction": { "enum": ["both", "forward"] },
+        "max_speed_mps": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

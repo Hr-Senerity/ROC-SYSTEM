@@ -1,4 +1,4 @@
-﻿# ROC-SYSTEM
+# ROC-SYSTEM
 
 Robot Operation Control Platform — 机器人运营控制平台
 
@@ -9,69 +9,43 @@ Robot Operation Control Platform — 机器人运营控制平台
 ```mermaid
 graph TB
     subgraph Frontend["Frontend (React 18 + Vite)"]
-        AuthCtx["AuthContext<br/>JWT token / role / username"]
-        Router["React Router"]
-        PR["ProtectedRoute"]
-        SAR["SuperAdminRoute"]
-        Pages["14 Pages<br/>Home · Login · Register · Profile<br/>Projects · ProjectDetail · MapDetail<br/>SuperAdmin · Protocols · …"]
-        subgraph UI["shadcn/ui (49 components)"]
-        end
+        Workspace["Operations workspace"]
+        BrowserWS["VehicleRealtimeProvider<br/>/ws/status"]
     end
 
     subgraph Gateway["Gateway (Nginx)"]
-        NGX["Static serving + API proxy"]
+        NGX["Static serving + /api + /ws proxy"]
     end
 
     subgraph Backend["Backend (C++17 / Drogon)"]
-        subgraph Router2["Drogon HttpAppFramework"]
-            Health["/api/health · /api/db/ping"]
-            subgraph MW["Middleware Filters"]
-                AF["AuthFilter<br/>JWT verify"]
-                SAF["SuperAdminFilter<br/>JWT + role check"]
-            end
-            subgraph Ctrls["Controllers"]
-                Auth["AuthController<br/>register · login · me<br/>change-password · logout"]
-                Admin["AdminController<br/>users CRUD · stats"]
-                Project["ProjectController<br/>projects CRUD · maps upload"]
-                Vehicle["VehicleController<br/>vehicles CRUD"]
-                ProtoEp["Protocol Endpoints<br/>status · command · roc · pending"]
-                WSCtrl["StatusWsController<br/>WebSocket /ws/status"]
-            end
-        end
-        subgraph Protocols["Protocol Layer"]
-            PB["ProtocolBridge<br/>ingest · serialize · enqueue<br/>pollCommands · callbacks"]
-            JSONSer["JsonSerializer"]
-            ROCSer["RocSerializer<br/>Magic: 0x524F4320"]
-        end
-        subgraph Utils["Utilities"]
-            JWT["JwtHelper<br/>HMAC-SHA256"]
-            PWHash["PasswordHash<br/>SHA-256 + salt"]
-        end
-        subgraph DB2["Data Layer"]
-            Pool["ConnectionPool<br/>Thread-safe · 4 connections"]
-            PGC["PostgresClient<br/>libpqxx"]
-        end
+        REST["Account REST controllers<br/>JWT authorization"]
+        StatusWS["StatusWsController<br/>browser project subscriptions"]
+        DeviceWS["DeviceWsController<br/>/ws/device"]
+        Codec["DeviceProtocol v1<br/>JSON envelope validation"]
+        StatusService["VehicleStatusService<br/>sequence + telemetry transaction"]
+        DeployService["DeploymentService<br/>durable tasks + leases + events"]
+        DBClient["PostgresClient<br/>libpqxx"]
+    end
+
+    subgraph Vehicle["Vehicle-side C++17 library (separate repository)"]
+        Client["Device token · heartbeat · telemetry · task delivery · reconnect"]
     end
 
     subgraph Database["PostgreSQL 16"]
-        Tables["users · projects · maps · vehicles"]
+        Tables["users · projects · maps · vehicles<br/>resource revisions · deployment tasks/events"]
     end
 
-    Frontend -->|"HTTP / WebSocket"| Gateway
-    Gateway --> Backend
-    Router --> PR --> SAR
-    AuthCtx --> Router
-    Health --> DB2
-    AF --> Ctrls
-    SAF --> Ctrls
-    Ctrls --> Utils
-    Ctrls --> DB2
-    ProtoEp --> PB
-    PB --> JSONSer
-    PB --> ROCSer
-    PB --> WSCtrl
-    WSCtrl -->|"broadcast()"| Frontend
-    DB2 --> Database
+    Workspace -->|"HTTP"| NGX
+    BrowserWS -->|"WebSocket"| NGX
+    Client -->|"WebSocket JSON"| NGX
+    NGX --> REST
+    NGX --> StatusWS
+    NGX --> DeviceWS
+    DeviceWS --> Codec --> StatusService --> DBClient --> Tables
+    REST --> DBClient
+    DeviceWS --> DeployService --> DBClient
+    DeployService -->|"task.available"| DeviceWS
+    StatusService -->|"committed vehicle event"| StatusWS --> BrowserWS
 ```
 
 ## 技术栈
@@ -118,7 +92,8 @@ ROC-SYSTEM/
 │       │   ├── AdminController.{h,cpp}     # 用户 CRUD · 统计 · 角色权限
 │       │   ├── ProjectController.{h,cpp}   # 项目/地图 CRUD · 文件上传
 │       │   ├── VehicleController.{h,cpp}   # 车辆注册 · 状态更新 · 删除
-│       │   └── StatusWsController.{h,cpp}  # WebSocket 连接管理 · 广播
+│       │   ├── StatusWsController.{h,cpp}  # 浏览器项目订阅 · 广播
+│       │   └── DeviceWsController.{h,cpp}  # 设备鉴权 · 心跳 · 遥测
 │       ├── middleware/
 │       │   └── AuthMiddleware.{h,cpp}      # AuthFilter · SuperAdminFilter
 │       ├── models/
@@ -127,14 +102,10 @@ ROC-SYSTEM/
 │       │   ├── PostgresClient.{h,cpp}      # SQL 执行 (query/execute/insertReturning)
 │       │   └── ConnectionPool.{h,cpp}      # 线程安全连接池 (4 连接)
 │       ├── protocols/
-│       │   ├── common/types.h              # ProtocolType · MessageType · RobotStatus · ControlCommand
-│       │   ├── ProtocolSerializer.h        # IProtocolSerializer 抽象接口
-│       │   ├── JsonSerializer.{h,cpp}      # JSON ↔ RobotStatus / ControlCommand
-│       │   ├── RocSerializer.{h,cpp}       # ROC binary ↔ RobotStatus / ControlCommand
-│       │   ├── ProtocolBridge.{h,cpp}      # 消息路由 · 回调 · 指令队列
-│       │   └── roc/
-│       │       ├── README.md               # ROC 协议规范文档
-│       │       └── roc_bridge.cpp          # HTTP 端点注册 (status/command/roc/pending)
+│       │   ├── common/types.h              # RobotStatus 领域类型
+│       │   └── DeviceProtocol.{h,cpp}       # JSON Device Protocol v1 编解码与校验
+│       ├── services/
+│       │   └── VehicleStatusService.{h,cpp} # sequence 与车辆快照原子持久化
 │       └── utils/
 │           ├── JwtHelper.{h,cpp}           # JWT 签发与验证 (HMAC-SHA256)
 │           ├── PasswordHash.{h,cpp}        # 密码哈希 (SHA-256 + 随机盐)
@@ -215,7 +186,7 @@ ROC-SYSTEM/
 Browser → Nginx (static or proxy)
   → Drogon HttpAppFramework
     → CORS Preflight? → pass through
-    → Route Match: /api/auth/* /api/admin/* /api/projects/* /api/vehicles/* /api/protocol/*
+    → Route Match: /api/auth/* /api/admin/* /api/projects/* /api/vehicles/*
     → Middleware (optional):
         AuthFilter          → JWT Bearer token 校验 → 注入 user_id/username/role 到 request attributes
         SuperAdminFilter    → JWT + role == "super_admin" 校验
@@ -231,39 +202,26 @@ Browser → Nginx (static or proxy)
 ### WebSocket 实时推送链
 
 ```
-Robot System
-  → POST /api/protocol/status (JSON + per-vehicle Device token)
-    → ProtocolBridge::ingest(data, JSON)
-      → JsonSerializer::deserializeStatus()
-        → onStatusReport callback (registered in main.cpp)
-          → VehicleStatusService validates and persists telemetry/version
-          → StatusWsController::broadcastVehicle(vehicle)
-            → 仅发送给已认证且订阅该 project_id 的连接
-              → VehicleRealtimeProvider 合并版本化事件
-                → 更新画布上车辆标记位置/状态
+Vehicle C++17 client
+  → GET /ws/device + Authorization: Device <per-vehicle token>
+    → DeviceWsController maps token to vehicle identity
+      → DeviceProtocol validates JSON v1 envelope and sequence
+        → VehicleStatusService atomically persists heartbeat/telemetry + sequence
+          → StatusWsController broadcasts only the committed vehicle snapshot
+            → authenticated /ws/status project subscribers
+              → VehicleRealtimeProvider merges versioned events
 ```
 
-### 协议消息路由
+### JSON Device Protocol v1
 
-```
-POST /api/protocol/status  (JSON status)
-  → JSON 状态预解析 → Device token/robot_id 校验
-  → ProtocolBridge::ingest(JSON) → 持久化遥测 → 项目级 WebSocket 事件
-
-POST /api/protocol/command (JSON command)
-  → JSON 指令预解析 → Device token/robot_id 校验
-  → ProtocolBridge::enqueueCommand(JSON)
-
-POST /api/protocol/roc     (ROC binary status)
-  → STATUS_REPORT 预解析 → Device token/robot_id 校验
-  → ProtocolBridge::ingest(ROC) → 持久化遥测 → 项目级 WebSocket 事件
-
-GET /api/protocol/pending/{robot_id}      → ProtocolBridge::pollCommands()
-  → 返回并清空该 robot_id 的内存待执行指令队列
-```
-
-HTTP 入口会先按其声明格式完成解析和设备授权，再调用协议桥；因此协议桥内部的 serializer fallback 不代表 HTTP 接口可以混传内容类型。当前 `/api/protocol/roc` 只接受 ROC `STATUS_REPORT`，二进制控制帧和心跳尚未开放 HTTP 接入。待执行指令队列不持久化，服务重启后不会保留。
-
+- 车辆只通过 `/ws/device` 上报，不再轮询任务或调用旧协议 HTTP 入口。
+- 每条消息包含 `protocol_version`、UUID `message_id`、`type`、十进制字符串 `sequence`、RFC 3339 `timestamp` 和对象 `payload`。
+- 车辆身份只从 WebSocket 握手头 `Authorization: Device <token>` 映射；正文中的 `vehicle_id`/`robot_id` 会被拒绝。
+- 当前上行类型为 `heartbeat` 和 `telemetry`。建议 30 秒心跳，45 秒无有效消息关闭连接；全局硬上限 64 KiB，heartbeat 最大 4 KiB，telemetry 最大 16 KiB。
+- 最后设备 sequence 与遥测在同一数据库更新中提交；重复 sequence 返回幂等确认，不重复写入或广播。
+- ROC 二进制、`/api/protocol/status`、`/api/protocol/command`、`/api/protocol/roc` 和 `/api/protocol/pending/{robot_id}` 已删除。
+- T13 将在此常连接上增加 `task.available` 通知；耐久任务和大文件仍通过 HTTP(S) 接受和下载，不在 WebSocket 传输大文件。
+- 机器可读合同位于 `roc-backend/schemas/device-protocol-v1.schema.json`；T12 路网数据合同位于 `roc-backend/schemas/road-network-v1.schema.json`，当前尚无路网版本写入接口。
 ### 前端路由守卫
 
 ```
@@ -291,16 +249,14 @@ Register/Login
 ### 实时状态流
 
 ```
-Robot reports status (via JSON or ROC HTTP endpoint)
-  → 单车 Device token 与 robot_id(UUID) 白名单校验
-    → ProtocolBridge::ingest()
-    → JsonSerializer/RocSerializer::deserializeStatus() → RobotStatus struct
-      → onStatusReport callback
-        → 数据库事务更新车辆状态并递增 telemetry_version
-        → 仅向订阅车辆所属项目的已认证 WebSocket 客户端推送
-          → 前端按 version 合并事件；断线时每 10 秒 REST 轮询兜底
+Vehicle opens /ws/device with a per-vehicle Device token
+  → server derives vehicle identity from the token hash
+    → heartbeat / telemetry JSON v1 message
+      → protocol, field, size and monotonic sequence validation
+        → database atomically updates snapshot + telemetry_version + device_last_sequence
+          → project-scoped /ws/status event after commit
+            → frontend merges by version; REST polling remains browser fallback
 ```
-
 ### 地图可视化 — 统一 SVG 坐标空间
 
 ```
@@ -321,63 +277,45 @@ fitScale + zoom + pan → 单一 SVG <g transform>
 ## 数据库 Schema
 
 ```mermaid
-erDiagram
-    users ||--o{ projects : owns
-    projects ||--o{ maps : contains
-    users ||--o{ vehicles : manages
+graph TB
+    subgraph Frontend["Frontend (React 18 + Vite)"]
+        Workspace["Operations workspace"]
+        BrowserWS["VehicleRealtimeProvider<br/>/ws/status"]
+    end
 
-    users {
-        uuid      id            PK "uuid_generate_v4()"
-        varchar   username      UK "64"
-        varchar   email         UK "128"
-        varchar   password_hash "256, SHA-256"
-        varchar   salt          "64, random"
-        enum      role          "super_admin | regular"
-        enum      status        "active | disabled"
-        varchar   avatar        "256, nullable"
-        timestamptz created_at
-        timestamptz updated_at
-    }
+    subgraph Gateway["Gateway (Nginx)"]
+        NGX["Static serving + /api + /ws proxy"]
+    end
 
-    projects {
-        uuid      id            PK
-        uuid      user_id       FK "→ users.id"
-        varchar   name          "128"
-        text      description   "nullable"
-        varchar   robot_model   "nullable"
-        timestamptz created_at
-        timestamptz updated_at
-    }
+    subgraph Backend["Backend (C++17 / Drogon)"]
+        REST["Account REST controllers<br/>JWT authorization"]
+        StatusWS["StatusWsController<br/>browser project subscriptions"]
+        DeviceWS["DeviceWsController<br/>/ws/device"]
+        Codec["DeviceProtocol v1<br/>JSON envelope validation"]
+        StatusService["VehicleStatusService<br/>sequence + telemetry transaction"]
+        DeployService["DeploymentService<br/>durable tasks + leases + events"]
+        DBClient["PostgresClient<br/>libpqxx"]
+    end
 
-    maps {
-        uuid      id            PK
-        uuid      project_id    FK "→ projects.id"
-        varchar   name          "128"
-        varchar   file_path     "256"
-        float     coordinate_origin_x
-        float     coordinate_origin_y
-        jsonb     road_network  "路网数据"
-        timestamptz created_at
-    }
+    subgraph Vehicle["Vehicle-side C++17 library (separate repository)"]
+        Client["Device token · heartbeat · telemetry · task delivery · reconnect"]
+    end
 
-    vehicles {
-        uuid      id            PK
-        uuid      user_id       FK "→ users.id, nullable"
-        varchar   name          "128"
-        varchar   ip            "45, nullable"
-        varchar   status        "online | offline | error"
-        float     cpu           "0-100"
-        float     memory        "0-100"
-        int       battery       "0-100"
-        float     position_x
-        float     position_y
-        float     position_theta
-        float     velocity_linear
-        float     velocity_angular
-        float     localization_confidence
-        timestamptz created_at
-        timestamptz updated_at
-    }
+    subgraph Database["PostgreSQL 16"]
+        Tables["users · projects · maps · vehicles<br/>resource revisions · deployment tasks/events"]
+    end
+
+    Workspace -->|"HTTP"| NGX
+    BrowserWS -->|"WebSocket"| NGX
+    Client -->|"WebSocket JSON"| NGX
+    NGX --> REST
+    NGX --> StatusWS
+    NGX --> DeviceWS
+    DeviceWS --> Codec --> StatusService --> DBClient --> Tables
+    REST --> DBClient
+    DeviceWS --> DeployService --> DBClient
+    DeployService -->|"task.available"| DeviceWS
+    StatusService -->|"committed vehicle event"| StatusWS --> BrowserWS
 ```
 
 ## API 端点
@@ -439,49 +377,35 @@ erDiagram
 | `/api/vehicles/{id}/device-token` | POST | Bearer | 生成或轮换单车凭据；明文仅返回一次 |
 | `/api/vehicles/{id}/device-token` | DELETE | Bearer | 撤销单车凭据 |
 
-### 协议 (Protocol)
+### 设备通信 (JSON Device Protocol v1)
+
+| 端点 | 协议 | 认证 | 说明 |
+|---|---|---|---|
+| `/ws/device` | WebSocket JSON | `Authorization: Device <token>` 握手头 | 单车心跳与完整遥测；身份由 token 映射，持久 sequence 去重，断线自动标记离线 |
+
+设备上行消息使用统一 JSON envelope，当前接受 `heartbeat` 和 `telemetry`；单条最大 64 KiB。服务端 `hello` 返回车辆 ID、30 秒心跳建议、45 秒空闲超时、大小限制和已持久化的最后客户端 sequence。持久任务以服务端 `task.available` envelope 通知，车辆不轮询；旧 ROC、status、command 和 pending 接口均不再注册。
+
+### 持久设备任务 (Durable deployment tasks)
 
 | 端点 | Method | 认证 | 说明 |
 |---|---|---|---|
-| `/api/protocol/status` | POST | Device token | 接收机器人状态上报（JSON） |
-| `/api/protocol/command` | POST | Device token | 写入待执行控制指令（JSON） |
-| `/api/protocol/roc` | POST | Device token | 接收 ROC 二进制状态帧；当前仅支持 `STATUS_REPORT` |
-| `/api/protocol/pending/{robot_id}` | GET | Device token | Robot 读取并清空待执行内存指令队列 |
+| `/api/projects/{project_id}/deployments` | POST | Bearer | 以不可变资源版本、目标车辆和幂等键创建逐车任务批次 |
+| `/api/projects/{project_id}/deployments/{batch_id}` | GET | Bearer | 查询批次及逐车任务状态 |
+| `/api/projects/{project_id}/deployments/{batch_id}/cancel` | POST | Bearer | 取消排队、已通知、已接受或下载中的任务 |
+| `/api/device/tasks/{task_id}/accept` | POST | Device | 接受本车任务并取得 30 分钟租约；重复接受返回同一租约 |
+| `/api/device/tasks/{task_id}/manifest` | GET | Device + `X-Task-Lease` | 获取资源版本、类型、大小、SHA-256 和下载地址 |
+| `/api/device/tasks/{task_id}/artifact` | GET | Device + `X-Task-Lease` | 下载道路 JSON 或原始地图图片 |
+| `/api/device/tasks/{task_id}/status` | POST | Device + `X-Task-Lease` | 以唯一 `event_id` 幂等回报下载、交付、完成或失败状态 |
 
-协议接口要求 `Authorization: Device <token>`，消息中的 `robot_id` 必须是该凭据对应的车辆 UUID。平台仅保存凭据 SHA-256 摘要。`DEVICE_TOKEN` 只作为迁移期开关：仅当 `DEVICE_ALLOW_SHARED_TOKEN=true` 时允许旧共享凭据，生产环境应保持关闭并启用 TLS。
+任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
 
-### 实时通信 (WebSocket)
+### 浏览器实时通信 (WebSocket)
 
 | 端点 | 协议 | 说明 |
 |---|---|---|
-| `/ws/status` | WebSocket | 首帧发送 `{type:"authenticate",token:"<JWT>"}`，认证后以 `{type:"subscribe",project_id:"<UUID>"}` 订阅有权限的项目；断线自动重连并由 REST 轮询兜底 |
+| `/ws/status` | WebSocket JSON | 首帧发送 `{type:"authenticate",token:"<JWT>"}`，认证后以 `{type:"subscribe",project_id:"<UUID>"}` 订阅有权限的项目；断线自动重连并由 REST 轮询兜底 |
 
-服务端连接后先发送 `hello`。客户端须在 5 秒内完成账户 JWT 认证；认证后可发送 `subscribe`、`unsubscribe` 和 `ping`。订阅成功返回项目 `snapshot`，后续事件包括 `vehicle_created`、`vehicle_updated`、`vehicle_deleted`、`pong` 和结构化 `error`。WebSocket 使用账户 JWT，不使用 Device token。
-
-## ROC 二进制协议
-
-ROC (Robot Operation Control) 是为机器人运营控制设计的轻量级二进制通信协议。
-
-**帧格式** (总头部 10 bytes):
-
-```
-+--------+--------+------------+--------+
-| Header | Type   | Length     | Data   |
-| 4 bytes| 2 bytes| 4 bytes    | N bytes|
-+--------+--------+------------+--------+
-```
-
-| 字段 | 大小 | 说明 |
-|---|---|---|
-| Header (Magic) | 4 bytes | `0x524F4320` = "`ROC `" |
-| Type | 2 bytes | `0x0001` STATUS_REPORT / `0x0002` CONTROL_CMD / `0x0003` HEARTBEAT |
-| Length | 4 bytes | Data 字段的字节长度 (大端) |
-| Data | N bytes | 类型特定的序列化 payload |
-
-整数、字符串长度及 IEEE 754 `float64` 均按网络字节序（大端）编码。字符串编码为 `[uint16 字节长度][UTF-8 数据]`，Payload 是固定字段顺序，不是 TLV。单次 `/api/protocol/roc` 请求必须恰好包含一帧，声明长度与实际 Payload 不一致、字段截断或存在尾随字节时返回 HTTP 400。
-
-`STATUS_REPORT` Payload 顺序：`robot_id`、`online(uint8)`、`cpu_usage(float64)`、`memory_usage(float64)`、`battery_level(int32)`、`localization_confidence(float64)`、`position_x/y/theta(float64)`、`velocity_linear/angular(float64)`。完整二进制定义与当前开放边界见 [`roc-backend/src/protocols/roc/README.md`](roc-backend/src/protocols/roc/README.md)。
-
+服务端连接后先发送 `hello`。浏览器须在 5 秒内完成账户 JWT 认证；认证后可发送 `subscribe`、`unsubscribe` 和 `ping`。订阅成功返回项目 `snapshot`，后续事件包括车辆事件、`deployment_created`、`deployment_updated`、`deployment_task_updated`、`pong` 和结构化 `error`。账户 JWT 与 Device token 不得互换。
 ## 部署架构
 
 ### Docker Compose 三服务拓扑

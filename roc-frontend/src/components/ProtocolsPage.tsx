@@ -1,88 +1,130 @@
 import { useState } from 'react';
 import {
-  ArrowLeft, Braces, Code2, KeyRound, Radio, ShieldAlert, Zap,
+  ArrowLeft, Braces, KeyRound, PackageCheck, Radio, ShieldAlert, Zap,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-type ProtocolType = 'json' | 'roc' | 'realtime';
-
-const deviceEndpoints = [
-  { method: 'POST', path: '/api/protocol/status', purpose: '上报 JSON 遥测快照；写入数据库后触发项目实时事件' },
-  { method: 'POST', path: '/api/protocol/command', purpose: '向指定车辆的内存队列写入 JSON 控制指令' },
-  { method: 'GET', path: '/api/protocol/pending/{robot_id}', purpose: '读取并清空该车辆当前的待执行指令' },
-] as const;
+type GuideSection = 'device' | 'tasks' | 'realtime';
 
 const credentialEndpoints = [
   { method: 'GET', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '查看是否已配置、是否启用及凭据尾号' },
-  { method: 'POST', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '首次签发或轮换凭据；明文仅在本次响应中出现' },
-  { method: 'DELETE', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '立即撤销该车辆的设备凭据' },
+  { method: 'POST', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '首次签发或轮换单车凭据；明文仅在本次响应出现' },
+  { method: 'DELETE', path: '/api/vehicles/{vehicle_id}/device-token', purpose: '立即撤销凭据、断开现有设备会话并阻止新连接' },
 ] as const;
 
-const statusFields = [
-  ['robot_id', 'string · UUID', '必填', '平台车辆 ID，必须与 Device token 对应'],
-  ['online', 'boolean', '遥测至少一项', '在线状态；最终映射为 online / offline'],
-  ['cpu_usage', 'number', '遥测至少一项', 'CPU 使用率，0–100'],
-  ['memory_usage', 'number', '遥测至少一项', '内存使用率，0–100'],
-  ['battery_level', 'integer', '遥测至少一项', '电量，0–100'],
-  ['localization_confidence', 'number', '遥测至少一项', '定位置信度，0–100'],
-  ['position', 'object', '遥测至少一项', '{ x, y, theta }，各值须为有限数值'],
-  ['velocity', 'object', '遥测至少一项', '{ linear, angular }，各值须为有限数值'],
+const taskEndpoints = [
+  { method: 'POST', path: '/api/device/tasks/{task_id}/accept', purpose: '接受任务并取得 30 分钟租约；重复接受返回同一租约' },
+  { method: 'GET', path: '/api/device/tasks/{task_id}/manifest', purpose: '读取资源类型、版本、大小、SHA-256 和制品地址' },
+  { method: 'GET', path: '/api/device/tasks/{task_id}/artifact', purpose: '下载道路 JSON 或原始地图图片；必须携带有效租约' },
+  { method: 'POST', path: '/api/device/tasks/{task_id}/status', purpose: '幂等回报下载、交付、完成或失败状态' },
 ] as const;
 
-const jsonExample = `{
-  "robot_id": "8e2cb75e-27f3-4772-a9c1-b5d4b750ac75",
-  "online": true,
-  "cpu_usage": 32.4,
-  "memory_usage": 48.1,
-  "battery_level": 85,
-  "localization_confidence": 96.5,
-  "position": { "x": 1.5, "y": 2.3, "theta": 0.5 },
-  "velocity": { "linear": 0.4, "angular": 0.1 }
+const accountTaskEndpoints = [
+  { method: 'POST', path: '/api/projects/{project_id}/deployments', purpose: '账户按不可变资源版本和车辆列表创建批次' },
+  { method: 'GET', path: '/api/projects/{project_id}/deployments/{batch_id}', purpose: '读取批次与逐车任务状态' },
+  { method: 'POST', path: '/api/projects/{project_id}/deployments/{batch_id}/cancel', purpose: '取消尚未进入最终交付阶段的任务' },
+] as const;
+
+const envelopeFields = [
+  ['protocol_version', 'integer', '固定为 1', '协议主版本；不支持的版本会被拒绝'],
+  ['message_id', 'UUID string', '必填', '本条消息的幂等标识'],
+  ['type', 'string', '必填', '当前设备上行支持 heartbeat / telemetry'],
+  ['sequence', 'decimal string', '必填且大于 0', '设备持久递增序列；服务端跨重连拒绝重复写入'],
+  ['timestamp', 'RFC 3339 string', '必填', '设备产生消息的 UTC 时间'],
+  ['payload', 'object', '必填', '类型对应的数据；不得携带 vehicle_id 或 robot_id'],
+] as const;
+
+const heartbeatExample = `{
+  "protocol_version": 1,
+  "message_id": "123e4567-e89b-42d3-a456-426614174000",
+  "type": "heartbeat",
+  "sequence": "41",
+  "timestamp": "2026-09-16T12:00:00Z",
+  "payload": {
+    "library_version": "0.1.0"
+  }
 }`;
 
-const curlExample = `curl -X POST "https://<HOST>/api/protocol/status" \\
-  -H "Authorization: Device <DEVICE_TOKEN>" \\
-  -H "Content-Type: application/json" \\
-  --data '${jsonExample}'`;
-
-const commandExample = `{
-  "robot_id": "8e2cb75e-27f3-4772-a9c1-b5d4b750ac75",
-  "command_type": "move",
-  "linear_x": 0.4,
-  "linear_y": 0,
-  "linear_z": 0,
-  "angular_x": 0,
-  "angular_y": 0,
-  "angular_z": 0.1,
-  "task_params": "{\\"task_id\\":\\"demo-001\\"}"
+const telemetryExample = `{
+  "protocol_version": 1,
+  "message_id": "123e4567-e89b-42d3-a456-426614174001",
+  "type": "telemetry",
+  "sequence": "42",
+  "timestamp": "2026-09-16T12:00:01Z",
+  "payload": {
+    "online": true,
+    "cpu_usage": 32.4,
+    "memory_usage": 48.1,
+    "battery_level": 85,
+    "localization_confidence": 96.5,
+    "position": { "x": 1.5, "y": 2.3, "theta": 0.5 },
+    "velocity": { "linear": 0.4, "angular": 0.1 }
+  }
 }`;
 
-const rocFrame = `偏移   长度      类型       内容
-0      4 byte    uint32     Magic = 0x524F4320 ("ROC ")
-4      2 byte    uint16     Type = 0x0001 (STATUS_REPORT)
-6      4 byte    uint32     Payload 字节长度 N
-10     N byte    bytes      状态负载`;
+const helloExample = `{
+  "protocol_version": 1,
+  "message_id": "<SERVER_MESSAGE_UUID>",
+  "type": "hello",
+  "sequence": "<SERVER_SEQUENCE>",
+  "timestamp": "<SERVER_UTC_TIME>",
+  "payload": {
+    "vehicle_id": "<TOKEN_MAPPED_VEHICLE_UUID>",
+    "heartbeat_interval_seconds": 30,
+    "idle_timeout_seconds": 45,
+    "max_message_bytes": 65536,
+    "max_heartbeat_bytes": 4096,
+    "max_telemetry_bytes": 16384,
+    "last_client_sequence": "40"
+  }
+}`;
 
-const rocPayload = `顺序   类型                 字段
-1      uint16 + UTF-8      robot_id 字节长度 + UUID
-2      uint8               online (0 / 1)
-3      float64             cpu_usage
-4      float64             memory_usage
-5      int32               battery_level
-6      float64             localization_confidence
-7      float64             position_x
-8      float64             position_y
-9      float64             position_theta
-10     float64             velocity_linear
-11     float64             velocity_angular`;
+const ackExample = `{
+  "protocol_version": 1,
+  "message_id": "<SERVER_MESSAGE_UUID>",
+  "type": "ack",
+  "sequence": "<SERVER_SEQUENCE>",
+  "timestamp": "<SERVER_UTC_TIME>",
+  "payload": {
+    "ack_message_id": "123e4567-e89b-42d3-a456-426614174001",
+    "ack_sequence": "42",
+    "accepted_type": "telemetry",
+    "duplicate": false
+  }
+}`;
 
-const websocketFlow = `// 1. 服务端连接成功后发送
+const taskAvailableExample = `{
+  "protocol_version": 1,
+  "message_id": "<SERVER_MESSAGE_UUID>",
+  "type": "task.available",
+  "sequence": "<SERVER_SEQUENCE>",
+  "timestamp": "<SERVER_UTC_TIME>",
+  "payload": {
+    "task_id": "<TASK_UUID>",
+    "batch_id": "<BATCH_UUID>",
+    "project_id": "<PROJECT_UUID>",
+    "resource_type": "road_network",
+    "resource_revision_id": "<REVISION_UUID>",
+    "attempt": 0,
+    "max_attempts": 3
+  }
+}`;
+
+const taskStatusExample = `{
+  "event_id": "<NEW_UUID_FOR_EACH_STATE_REPORT>",
+  "state": "downloading",
+  "progress": 25,
+  "error_code": "",
+  "error_message": ""
+}`;
+
+const browserWebsocketFlow = `// 1. 服务端连接成功后发送
 { "type": "hello", "authentication": "first_message", "protocol_version": 1 }
 
-// 2. 客户端必须在 5 秒内发送 JWT（不是 Device token）
+// 2. 浏览器在 5 秒内发送账户 JWT（不是 Device token）
 { "type": "authenticate", "token": "<ACCOUNT_JWT>" }
 
-// 3. 收到 authenticated 后订阅有权限的项目
+// 3. 认证后订阅有权限的项目
 { "type": "subscribe", "project_id": "<PROJECT_UUID>" }
 
 // 4. 保活；服务端响应 { "type": "pong" }
@@ -116,7 +158,7 @@ function SectionTitle({ children, description }: { children: string; description
 
 export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
-  const [activeProtocol, setActiveProtocol] = useState<ProtocolType>('json');
+  const [activeSection, setActiveSection] = useState<GuideSection>('device');
 
   return (
     <div className={embedded ? 'text-slate-950' : 'min-h-screen overflow-x-hidden bg-slate-50 text-slate-950'}>
@@ -143,18 +185,19 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
 
       <div className={embedded ? 'space-y-6' : 'mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8'}>
         <div className="max-w-3xl">
-          <p className="text-sm font-semibold text-blue-700">设备与应用接入参考 · v1</p>
+          <p className="text-sm font-semibold text-blue-700">JSON Device Protocol · v1</p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">文档指南</h1>
           <p className="mt-3 text-base leading-7 text-slate-600">
-            本页以当前后端实现为准。设备使用单车凭据上报数据，网页或业务客户端使用账户 JWT 订阅项目实时状态。
+            设备通过独立 WebSocket 常连接上报心跳与遥测并接收任务通知，再通过 HTTP(S) 接受任务、下载制品和回报状态；浏览器使用账户 JWT 按项目订阅数据库提交后的车辆与任务状态。ROC 二进制和任务轮询接口不再提供。
           </p>
         </div>
 
-        <section aria-labelledby="access-flow-heading" className="grid gap-3 sm:grid-cols-3">
+        <section aria-labelledby="access-flow-heading" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            ['01', '注册车辆', '在项目的车辆管理页创建车辆，记录车辆 UUID。'],
-            ['02', '签发凭据', '生成单车 Device token 并立即安全保存，明文不会再次展示。'],
-            ['03', '接入与订阅', '设备携带凭据上报；登录客户端以 JWT 订阅所属项目。'],
+            ['01', '注册车辆', '在项目车辆页创建车辆，由平台保存车辆与项目归属。'],
+            ['02', '签发凭据', '生成单车 Device token 并立即保存；平台只保留摘要和尾号。'],
+            ['03', '建立常连接', 'C++17 车端库携带 Device token 连接 /ws/device，并自动心跳和重连。'],
+            ['04', '接收与交付', 'WebSocket 接收 task.available，再用 HTTP(S) 接受、下载、校验和回报。'],
           ].map(([step, title, description]) => (
             <div key={step} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <span className="text-xs font-bold text-blue-700">{step}</span>
@@ -168,16 +211,16 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
           <nav aria-label="接入类型" className="self-start rounded-xl border border-slate-200 bg-white p-2 shadow-sm md:sticky md:top-6">
             <div className="grid grid-cols-3 gap-2 md:grid-cols-1">
               {([
-                ['json', Braces, 'JSON HTTP'],
-                ['roc', Code2, 'ROC 二进制'],
-                ['realtime', Radio, '实时订阅'],
+                ['device', Braces, '设备 JSON 通道'],
+                ['tasks', PackageCheck, '持久设备任务'],
+                ['realtime', Radio, '浏览器实时订阅'],
               ] as const).map(([id, Icon, label]) => (
                 <button
                   key={id}
                   type="button"
-                  aria-pressed={activeProtocol === id}
-                  onClick={() => setActiveProtocol(id)}
-                  className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors md:justify-start ${activeProtocol === id ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}
+                  aria-pressed={activeSection === id}
+                  onClick={() => setActiveSection(id)}
+                  className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors md:justify-start ${activeSection === id ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'}`}
                 >
                   <Icon className="size-5" aria-hidden="true" /><span>{label}</span>
                 </button>
@@ -188,33 +231,31 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
           <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
             <div className="flex items-start gap-4 border-b border-slate-200 pb-6">
               <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-600 text-white">
-                {activeProtocol === 'json' && <Braces className="size-6" />}
-                {activeProtocol === 'roc' && <Code2 className="size-6" />}
-                {activeProtocol === 'realtime' && <Radio className="size-6" />}
+                {activeSection === 'device' ? <Braces className="size-6" /> : activeSection === 'tasks' ? <PackageCheck className="size-6" /> : <Radio className="size-6" />}
               </span>
               <div className="min-w-0">
                 <h2 className="text-xl font-semibold">
-                  {activeProtocol === 'json' && 'JSON HTTP 接口'}
-                  {activeProtocol === 'roc' && 'ROC 二进制状态帧'}
-                  {activeProtocol === 'realtime' && 'WebSocket 实时订阅'}
+                  {activeSection === 'device' ? '设备 JSON 常连接' : activeSection === 'tasks' ? '持久设备任务' : '浏览器项目订阅'}
                 </h2>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {activeProtocol === 'json' && '状态上报、控制消息和设备指令轮询。'}
-                  {activeProtocol === 'roc' && '适用于以紧凑二进制格式上报完整车辆状态。'}
-                  {activeProtocol === 'realtime' && '面向登录客户端，按项目接收已持久化的车辆事件。'}
+                  {activeSection === 'device'
+                    ? '车辆身份来自握手阶段的单车凭据，消息正文不能声明或覆盖车辆 ID。'
+                    : activeSection === 'tasks'
+                      ? 'WebSocket 只通知任务可用；接受、清单、制品与状态均通过带租约的 HTTP(S) 完成。'
+                      : '面向登录工作台，按项目接收已经持久化的车辆快照和增量事件。'}
                 </p>
               </div>
             </div>
 
-            {activeProtocol === 'json' && (
+            {activeSection === 'device' && (
               <div className="mt-6 space-y-9">
                 <section className="rounded-xl border border-blue-200 bg-blue-50/70 p-4">
                   <div className="flex gap-3">
                     <KeyRound className="mt-0.5 size-5 shrink-0 text-blue-700" aria-hidden="true" />
                     <div>
-                      <h3 className="font-semibold text-blue-950">先获取单车凭据</h3>
+                      <h3 className="font-semibold text-blue-950">单车凭据管理</h3>
                       <p className="mt-1 text-sm leading-6 text-blue-950/75">
-                        以下凭据管理接口使用 <code>Authorization: Bearer &lt;ACCOUNT_JWT&gt;</code>，且仅车辆所有者或超级管理员可操作。
+                        凭据管理接口使用 <code>Authorization: Bearer &lt;ACCOUNT_JWT&gt;</code>，仅车辆所有者或超级管理员可操作。
                       </p>
                     </div>
                   </div>
@@ -229,88 +270,99 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                 </section>
 
                 <section>
-                  <SectionTitle description="三个入口均要求 Authorization: Device &lt;DEVICE_TOKEN&gt;，token 与 robot_id 必须属于同一辆车。">设备接口</SectionTitle>
-                  <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-                    <div className="divide-y divide-slate-200">
-                      {deviceEndpoints.map((endpoint) => (
-                        <div key={endpoint.path} className="grid gap-2 p-4 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
-                          <MethodBadge method={endpoint.method} />
-                          <div className="min-w-0">
-                            <code className="break-all text-sm text-slate-950">{endpoint.path}</code>
-                            <p className="mt-1 text-sm leading-6 text-slate-600">{endpoint.purpose}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  <SectionTitle description="Demo 使用 ws://公网IP:端口/ws/device；正式部署切换为同源 wss://。Authorization 仅在 WebSocket 升级请求中发送。">连接与鉴权</SectionTitle>
+                  <div className="mt-3 rounded-xl border border-slate-200 p-4 text-sm leading-6">
+                    <p><code>GET /ws/device</code></p>
+                    <p className="mt-2 text-slate-600">请求头：<code>Authorization: Device &lt;DEVICE_TOKEN&gt;</code></p>
+                    <p className="mt-2 text-slate-600">服务端从 token 摘要映射车辆；同一车辆的新连接会替换旧连接。</p>
                   </div>
+                  <CodeBlock>{helloExample}</CodeBlock>
                 </section>
 
                 <section>
-                  <SectionTitle description="当前接口按完整快照写入；未提供的遥测字段会使用默认值，因此设备端应发送完整字段集合。">状态请求字段</SectionTitle>
+                  <SectionTitle description="全局硬上限为 64 KiB；heartbeat 最大 4 KiB，telemetry 最大 16 KiB。sequence 使用十进制字符串避免跨语言 64 位整数精度问题。">统一消息外壳</SectionTitle>
                   <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-                    <table className="w-full min-w-[42rem] text-left text-sm">
+                    <table className="w-full min-w-[44rem] text-left text-sm">
                       <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">字段</th><th className="px-4 py-3">类型</th><th className="px-4 py-3">要求</th><th className="px-4 py-3">说明</th></tr></thead>
                       <tbody className="divide-y divide-slate-200">
-                        {statusFields.map(([field, type, required, description]) => <tr key={field}><td className="px-4 py-3 font-mono text-xs text-slate-950">{field}</td><td className="px-4 py-3 text-slate-600">{type}</td><td className="px-4 py-3 text-slate-600">{required}</td><td className="px-4 py-3 text-slate-600">{description}</td></tr>)}
+                        {envelopeFields.map(([field, type, required, description]) => <tr key={field}><td className="px-4 py-3 font-mono text-xs text-slate-950">{field}</td><td className="px-4 py-3 text-slate-600">{type}</td><td className="px-4 py-3 text-slate-600">{required}</td><td className="px-4 py-3 text-slate-600">{description}</td></tr>)}
                       </tbody>
                     </table>
                   </div>
-                  <CodeBlock>{jsonExample}</CodeBlock>
                 </section>
 
                 <section>
-                  <SectionTitle description="HOST 为部署域名或地址。生产环境必须使用 HTTPS。">状态上报示例</SectionTitle>
-                  <CodeBlock>{curlExample}</CodeBlock>
-                  <div className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
-                    <div className="rounded-lg bg-emerald-50 p-3 text-emerald-900"><strong>200</strong><p className="mt-1">状态已持久化并接受</p></div>
-                    <div className="rounded-lg bg-amber-50 p-3 text-amber-950"><strong>400</strong><p className="mt-1">JSON、字段或数值不合法</p></div>
-                    <div className="rounded-lg bg-rose-50 p-3 text-rose-900"><strong>401</strong><p className="mt-1">凭据无效或车辆不匹配</p></div>
-                  </div>
+                  <SectionTitle description="建议每 30 秒发送；45 秒没有有效设备消息时服务端关闭连接。车端库应使用带抖动的指数退避自动重连。">心跳</SectionTitle>
+                  <CodeBlock>{heartbeatExample}</CodeBlock>
                 </section>
 
                 <section>
-                  <SectionTitle description="command_type 必填；运动分量缺省为 0，task_params 是 JSON 字符串而不是嵌套对象。">控制指令示例</SectionTitle>
-                  <CodeBlock>{commandExample}</CodeBlock>
-                  <p className="mt-3 text-sm leading-6 text-slate-600">
-                    车辆随后调用 <code>GET /api/protocol/pending/&lt;robot_id&gt;</code> 获取 <code>{'{ "ok": true, "robot_id": "...", "commands": [...] }'}</code>。读取会清空当前队列，需由设备自行确认执行与重试策略；服务重启也不会保留此内存队列。
-                  </p>
+                  <SectionTitle description="遥测是完整快照。百分比字段为 0–100，位置和速度字段必须是有限数值。">遥测</SectionTitle>
+                  <CodeBlock>{telemetryExample}</CodeBlock>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">服务端在同一次数据库更新中写入遥测、递增浏览器版本并保存最后设备 sequence，提交成功后才向项目订阅者广播。</p>
                 </section>
-              </div>
-            )}
 
-            {activeProtocol === 'roc' && (
-              <div className="mt-6 space-y-9">
                 <section>
-                  <SectionTitle description="所有整数和浮点数均按网络字节序（大端）编码；头部固定为 10 字节。">状态帧头</SectionTitle>
-                  <CodeBlock>{rocFrame}</CodeBlock>
+                  <SectionTitle description="重复 sequence 返回 duplicate=true，不再次写入遥测；格式、版本和状态错误返回 type=error。">确认与幂等</SectionTitle>
+                  <CodeBlock>{ackExample}</CodeBlock>
                 </section>
-                <section>
-                  <SectionTitle description="float64 为 IEEE 754 双精度；robot_id 必须是与凭据匹配的车辆 UUID。">状态负载顺序</SectionTitle>
-                  <CodeBlock>{rocPayload}</CodeBlock>
-                </section>
-                <section>
-                  <SectionTitle>HTTP 传输</SectionTitle>
-                  <div className="mt-3 rounded-xl border border-slate-200 p-4 text-sm leading-6">
-                    <div className="flex flex-wrap items-center gap-3"><MethodBadge method="POST" /><code className="break-all">/api/protocol/roc</code></div>
-                    <ul className="mt-3 list-disc space-y-1 pl-5 text-slate-600">
-                      <li>请求头：<code>Authorization: Device &lt;DEVICE_TOKEN&gt;</code></li>
-                      <li>内容类型：<code>application/octet-stream</code></li>
-                      <li>成功返回 200；帧结构或消息类型错误返回 400；凭据不匹配返回 401。</li>
-                    </ul>
-                  </div>
-                </section>
-                <aside className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-                  <strong>当前实现范围：</strong><code>/api/protocol/roc</code> 只接受消息类型 <code>0x0001 STATUS_REPORT</code>。虽然序列化器预留了控制帧与心跳类型，但当前 HTTP 接口尚未开放这两类二进制消息。
+
+                <aside className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
+                  <strong>任务通知已启用：</strong>保持本连接即可接收 <code>task.available</code>；服务端在车辆重连时补发仍处于 offered 的任务，不提供任务轮询接口。
                 </aside>
               </div>
             )}
 
-            {activeProtocol === 'realtime' && (
+            {activeSection === 'tasks' && (
               <div className="mt-6 space-y-9">
                 <section>
-                  <SectionTitle description="连接地址与当前站点同源：HTTPS 对应 wss://，HTTP 对应 ws://。">连接入口</SectionTitle>
+                  <SectionTitle description="平台先持久化批次和逐车任务，再向在线车辆发送通知；通知丢失时由重连补发保证发现任务。">通知与重连</SectionTitle>
+                  <CodeBlock>{taskAvailableExample}</CodeBlock>
+                </section>
+
+                <section className="rounded-xl border border-blue-200 bg-blue-50/70 p-4">
+                  <SectionTitle description="账户接口使用 Bearer ACCOUNT_JWT，并校验项目所有权；idempotency_key 在项目和创建者范围内去重。">账户端批次接口</SectionTitle>
+                  <div className="mt-4 divide-y divide-blue-200/70 border-t border-blue-200/70">
+                    {accountTaskEndpoints.map((endpoint) => (
+                      <div key={`${endpoint.method}-${endpoint.path}`} className="grid gap-2 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
+                        <MethodBadge method={endpoint.method} />
+                        <div className="min-w-0"><code className="break-all text-sm">{endpoint.path}</code><p className="mt-1 text-sm text-blue-950/70">{endpoint.purpose}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <SectionTitle description="所有接口同时要求 Authorization: Device <DEVICE_TOKEN>。accept 之外还须发送 X-Task-Lease；租约只绑定当前车辆、任务和尝试次数。">车端任务接口</SectionTitle>
+                  <div className="mt-3 divide-y divide-slate-200 rounded-xl border border-slate-200 px-4">
+                    {taskEndpoints.map((endpoint) => (
+                      <div key={`${endpoint.method}-${endpoint.path}`} className="grid gap-2 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
+                        <MethodBadge method={endpoint.method} />
+                        <div className="min-w-0"><code className="break-all text-sm">{endpoint.path}</code><p className="mt-1 text-sm text-slate-600">{endpoint.purpose}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <SectionTitle description="允许的主路径为 accepted → downloading → delivering → delivered；失败可从活动状态进入 failed。progress 只能递增，delivered 必须为 100。">状态与幂等</SectionTitle>
+                  <CodeBlock>{taskStatusExample}</CodeBlock>
+                  <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
+                    <li><code>event_id</code> 全局唯一；同一事件重试返回当前任务，不重复写事件。</li>
+                    <li>租约为 30 分钟；接受/下载阶段超时且未超过三次可重新投递，交付中超时进入失败。</li>
+                    <li>道路制品返回 JSON；地图制品返回平台上传的原始图片。响应头 <code>X-Content-SHA256</code> 与 manifest 一致。</li>
+                    <li>平台“已送达”只表示车端已校验并保存/交给本地适配器，不表示地图已被车辆加载或应用。</li>
+                  </ul>
+                </section>
+              </div>
+            )}
+
+            {activeSection === 'realtime' && (
+              <div className="mt-6 space-y-9">
+                <section>
+                  <SectionTitle description="连接地址与当前站点同源：Demo 的 HTTP 对应 ws://，正式 HTTPS 对应 wss://。">连接入口</SectionTitle>
                   <div className="mt-3 rounded-xl border border-slate-200 p-4"><code className="text-sm">GET /ws/status</code></div>
-                  <CodeBlock>{websocketFlow}</CodeBlock>
+                  <CodeBlock>{browserWebsocketFlow}</CodeBlock>
                 </section>
                 <section>
                   <SectionTitle description="订阅成功立即返回 snapshot，之后仅推送该项目的增量事件。">服务端消息</SectionTitle>
@@ -318,20 +370,23 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                     {[
                       ['snapshot', 'project_id + vehicles，项目当前车辆快照'],
                       ['vehicle_created', 'project_id + vehicle，新建车辆'],
-                      ['vehicle_updated', 'project_id + vehicle，状态或配置更新'],
+                      ['vehicle_updated', 'project_id + vehicle，状态、连接或配置更新'],
                       ['vehicle_deleted', 'project_id + vehicle_id，车辆删除'],
+                      ['deployment_created', 'project_id + deployment，新建持久下发批次'],
+                      ['deployment_updated', 'project_id + deployment，批次取消或状态变化'],
+                      ['deployment_task_updated', 'project_id + task，单车任务状态变化'],
                       ['error', 'code + message，鉴权、权限或格式错误'],
-                      ['pong', '对客户端 ping 的保活响应'],
+                      ['pong', '对浏览器 ping 的保活响应'],
                     ].map(([type, description]) => <div key={type} className="rounded-lg bg-slate-50 p-4"><code className="text-sm font-semibold text-blue-700">{type}</code><p className="mt-1 text-sm leading-6 text-slate-600">{description}</p></div>)}
                   </div>
                 </section>
                 <section>
                   <SectionTitle>权限与连接约束</SectionTitle>
                   <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-                    <li>首条客户端消息必须是 <code>authenticate</code>；5 秒内未认证会断开连接。</li>
+                    <li>首条浏览器消息必须是 <code>authenticate</code>；5 秒内未认证会断开连接。</li>
                     <li>普通用户只能订阅自己拥有的项目；超级管理员可以订阅任意项目。</li>
                     <li>账户停用或项目权限被撤销后，推送前会再次校验并移除订阅。</li>
-                    <li>单条客户端消息最大 16 KiB；建议每 15 秒发送一次 <code>ping</code> 并实现指数退避重连。</li>
+                    <li>单条浏览器消息最大 16 KiB；建议每 15 秒发送 <code>ping</code> 并实现指数退避重连。</li>
                   </ul>
                 </section>
               </div>
@@ -339,7 +394,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
 
             <aside className="mt-8 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
               <ShieldAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-              <p><strong>安全边界：</strong>账户 JWT 与 Device token 用途不同，不得互换。平台只保存设备凭据摘要；生产环境须使用 TLS，并限制允许的 WebSocket Origin，设备接口不应以明文直接暴露到公网。</p>
+              <p><strong>Demo 边界：</strong>公网 HTTP/WS 只用于测试账号和测试数据。正式部署必须启用 HTTPS/WSS、Origin 白名单并轮换 JWT 密钥、测试密码和 Device token。</p>
             </aside>
           </article>
         </div>

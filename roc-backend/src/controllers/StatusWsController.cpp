@@ -317,6 +317,17 @@ void StatusWsController::broadcastVehicle(const std::string &eventType,
   for (const auto &connection : recipientsFor(projectId)) connection->send(payload);
 }
 
+void StatusWsController::broadcastProjectEvent(
+    const std::string &eventType, const std::string &projectId,
+    const std::string &payloadKey, const Json::Value &payloadValue) {
+  if (eventType.empty() || projectId.empty() || payloadKey.empty()) return;
+  Json::Value message;
+  message["type"] = eventType;
+  message["project_id"] = projectId;
+  message[payloadKey] = payloadValue;
+  const auto payload = serialize(message);
+  for (const auto &connection : recipientsFor(projectId)) connection->send(payload);
+}
 void StatusWsController::broadcastVehicleDeleted(const std::string &projectId,
                                                  const std::string &vehicleId) {
   if (projectId.empty() || vehicleId.empty()) return;

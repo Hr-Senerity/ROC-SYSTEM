@@ -8,16 +8,16 @@ namespace roc::config {
 namespace {
 
 std::string getenvOr(const char *key, const std::string &fallback) {
-  const char *v = std::getenv(key);
-  if (!v || !*v) return fallback;
-  return std::string(v);
+  const char *value = std::getenv(key);
+  if (!value || !*value) return fallback;
+  return std::string(value);
 }
 
 int getenvIntOr(const char *key, int fallback) {
-  const char *v = std::getenv(key);
-  if (!v || !*v) return fallback;
+  const char *value = std::getenv(key);
+  if (!value || !*value) return fallback;
   try {
-    return std::stoi(v);
+    return std::stoi(value);
   } catch (...) {
     throw std::runtime_error(std::string("Invalid int env: ") + key);
   }
@@ -39,45 +39,29 @@ std::vector<std::string> getenvCsv(const char *key) {
   return values;
 }
 
-bool getenvBoolOr(const char *key, bool fallback) {
-  const char *raw = std::getenv(key);
-  if (!raw || !*raw) return fallback;
-  const std::string value(raw);
-  if (value == "1" || value == "true" || value == "TRUE") return true;
-  if (value == "0" || value == "false" || value == "FALSE") return false;
-  throw std::runtime_error(std::string("Invalid bool env: ") + key);
-}
-
 }  // namespace
 
 AppConfig loadFromEnv() {
-  AppConfig cfg;
+  AppConfig config;
+  config.http.listenHost =
+      getenvOr("BACKEND_LISTEN_HOST", config.http.listenHost);
+  config.http.listenPort =
+      getenvIntOr("BACKEND_LISTEN_PORT", config.http.listenPort);
 
-  // HTTP
-  cfg.http.listenHost = getenvOr("BACKEND_LISTEN_HOST", cfg.http.listenHost);
-  cfg.http.listenPort = getenvIntOr("BACKEND_LISTEN_PORT", cfg.http.listenPort);
+  config.db.host = getenvOr("DB_HOST", config.db.host);
+  config.db.port = getenvIntOr("DB_PORT", config.db.port);
+  config.db.name = getenvOr("DB_NAME", config.db.name);
+  config.db.user = getenvOr("DB_USER", config.db.user);
+  config.db.password = getenvOr("DB_PASSWORD", config.db.password);
 
-  // DB
-  cfg.db.host = getenvOr("DB_HOST", cfg.db.host);
-  cfg.db.port = getenvIntOr("DB_PORT", cfg.db.port);
-  cfg.db.name = getenvOr("DB_NAME", cfg.db.name);
-  cfg.db.user = getenvOr("DB_USER", cfg.db.user);
-  cfg.db.password = getenvOr("DB_PASSWORD", cfg.db.password);
+  config.auth.jwtSecret = getenvOr("JWT_SECRET", config.auth.jwtSecret);
+  config.auth.tokenExpireSeconds =
+      getenvIntOr("JWT_EXPIRE_SECONDS", config.auth.tokenExpireSeconds);
 
-  // Auth
-  cfg.auth.jwtSecret = getenvOr("JWT_SECRET", cfg.auth.jwtSecret);
-  cfg.auth.tokenExpireSeconds = getenvIntOr("JWT_EXPIRE_SECONDS", cfg.auth.tokenExpireSeconds);
-
-  // Device protocol endpoints fail closed while this value is empty.
-  cfg.device.token = getenvOr("DEVICE_TOKEN", cfg.device.token);
-  cfg.device.allowSharedToken = getenvBoolOr(
-      "DEVICE_ALLOW_SHARED_TOKEN", cfg.device.allowSharedToken);
-  cfg.realtime.allowedOrigins = getenvCsv("WS_ALLOWED_ORIGINS");
-
-  // Private map file storage. Files are not exposed by Drogon's document root.
-  cfg.storage.mapDirectory = getenvOr("MAP_STORAGE_DIR", cfg.storage.mapDirectory);
-
-  return cfg;
+  config.realtime.allowedOrigins = getenvCsv("WS_ALLOWED_ORIGINS");
+  config.storage.mapDirectory =
+      getenvOr("MAP_STORAGE_DIR", config.storage.mapDirectory);
+  return config;
 }
 
 }  // namespace roc::config

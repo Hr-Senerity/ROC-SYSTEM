@@ -28,6 +28,10 @@ class StatusWsController : public drogon::WebSocketController<StatusWsController
 
   static void broadcastVehicle(const std::string &eventType,
                                const Json::Value &vehicle);
+  static void broadcastProjectEvent(const std::string &eventType,
+                                    const std::string &projectId,
+                                    const std::string &payloadKey,
+                                    const Json::Value &payload);
   static void broadcastVehicleDeleted(const std::string &projectId,
                                       const std::string &vehicleId);
 };

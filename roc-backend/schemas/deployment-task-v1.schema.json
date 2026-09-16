@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roc.example/schemas/deployment-task-v1.schema.json",
+  "title": "ROC Deployment Task Protocol v1",
+  "oneOf": [
+    { "$ref": "#/$defs/taskAvailable" },
+    { "$ref": "#/$defs/statusRequest" },
+    { "$ref": "#/$defs/manifestResponse" }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "resourceType": {
+      "enum": ["road_network", "map"]
+    },
+    "taskAvailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version", "message_id", "type", "sequence",
+        "timestamp", "payload"
+      ],
+      "properties": {
+        "protocol_version": { "const": 1 },
+        "message_id": { "$ref": "#/$defs/uuid" },
+        "type": { "const": "task.available" },
+        "sequence": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "task_id", "batch_id", "project_id", "resource_type",
+            "resource_revision_id", "attempt", "max_attempts"
+          ],
+          "properties": {
+            "task_id": { "$ref": "#/$defs/uuid" },
+            "batch_id": { "$ref": "#/$defs/uuid" },
+            "project_id": { "$ref": "#/$defs/uuid" },
+            "resource_type": { "$ref": "#/$defs/resourceType" },
+            "resource_revision_id": { "$ref": "#/$defs/uuid" },
+            "attempt": { "type": "integer", "minimum": 0 },
+            "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 }
+          }
+        }
+      }
+    },
+    "statusRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "state", "progress"],
+      "properties": {
+        "event_id": { "$ref": "#/$defs/uuid" },
+        "state": {
+          "enum": ["downloading", "delivering", "delivered", "failed"]
+        },
+        "progress": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "error_code": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "error_message": {
+          "type": "string",
+          "maxLength": 512
+        }
+      }
+    },
+    "manifestResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "manifest"],
+      "properties": {
+        "ok": { "const": true },
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "task_id", "batch_id", "project_id", "resource_type",
+            "resource_revision_id", "map_id", "content_type",
+            "byte_size", "sha256", "version", "artifact_url"
+          ],
+          "properties": {
+            "task_id": { "$ref": "#/$defs/uuid" },
+            "batch_id": { "$ref": "#/$defs/uuid" },
+            "project_id": { "$ref": "#/$defs/uuid" },
+            "resource_type": { "$ref": "#/$defs/resourceType" },
+            "resource_revision_id": { "$ref": "#/$defs/uuid" },
+            "map_id": { "$ref": "#/$defs/uuid" },
+            "content_type": { "type": "string", "maxLength": 96 },
+            "byte_size": { "type": "integer", "minimum": 1 },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "version": { "type": "integer", "minimum": 1 },
+            "schema_version": { "type": "integer", "minimum": 1 },
+            "artifact_url": {
+              "type": "string",
+              "pattern": "^/api/device/tasks/[0-9a-f-]+/artifact$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

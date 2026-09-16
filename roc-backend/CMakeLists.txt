@@ -7,7 +7,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(CTest)
 
-# Drogon + libpqxx + OpenSSL + jsoncpp
 find_package(Drogon CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PQXX REQUIRED IMPORTED_TARGET libpqxx)
@@ -38,19 +37,19 @@ add_executable(roc-backend-server
   src/controllers/VehicleController.h
   src/controllers/StatusWsController.cpp
   src/controllers/StatusWsController.h
+  src/controllers/DeviceWsController.cpp
+  src/controllers/DeviceWsController.h
+  src/controllers/DeploymentController.cpp
+  src/controllers/DeploymentController.h
+  src/services/DeploymentService.cpp
+  src/services/DeploymentService.h
   src/services/VehicleStatusService.cpp
   src/services/VehicleStatusService.h
   src/middleware/AuthMiddleware.cpp
   src/middleware/AuthMiddleware.h
   src/protocols/common/types.h
-  src/protocols/ProtocolSerializer.h
-  src/protocols/JsonSerializer.cpp
-  src/protocols/JsonSerializer.h
-  src/protocols/RocSerializer.cpp
-  src/protocols/RocSerializer.h
-  src/protocols/ProtocolBridge.cpp
-  src/protocols/ProtocolBridge.h
-  src/protocols/roc/roc_bridge.cpp
+  src/protocols/DeviceProtocol.cpp
+  src/protocols/DeviceProtocol.h
 )
 
 target_include_directories(roc-backend-server PRIVATE src)
@@ -63,10 +62,11 @@ target_link_libraries(roc-backend-server PRIVATE
 )
 
 if(BUILD_TESTING)
-  add_executable(roc-serializer-tests
-    tests/RocSerializerTests.cpp
-    src/protocols/RocSerializer.cpp
+  add_executable(device-protocol-tests
+    tests/DeviceProtocolTests.cpp
+    src/protocols/DeviceProtocol.cpp
   )
-  target_include_directories(roc-serializer-tests PRIVATE src)
-  add_test(NAME roc-serializer-tests COMMAND roc-serializer-tests)
+  target_include_directories(device-protocol-tests PRIVATE src)
+  target_link_libraries(device-protocol-tests PRIVATE PkgConfig::JSONCPP)
+  add_test(NAME device-protocol-tests COMMAND device-protocol-tests)
 endif()

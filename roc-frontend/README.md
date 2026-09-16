@@ -53,10 +53,10 @@ Vehicle state uses authenticated project-scoped WebSocket subscriptions. Events 
 `/guide` and `/protocols` render the same current interface reference in public and authenticated layouts. It documents:
 
 - account JWT versus per-vehicle Device token authentication;
-- JSON status, command, and pending-command endpoints;
-- the ROC binary `STATUS_REPORT` frame and its current HTTP boundary;
-- project-scoped WebSocket authentication, subscription, events, and heartbeat.
+- JSON Device Protocol v1 envelopes, heartbeat, telemetry, acknowledgements, and sequence idempotency;
+- the dedicated `/ws/device` vehicle connection and `/ws/status` browser project subscription;
+- the current boundary between implemented realtime telemetry and the later persistent-task phase.
 
-Do not place real credentials in examples. The backend's byte-level ROC definition is in [`../roc-backend/src/protocols/roc/README.md`](../roc-backend/src/protocols/roc/README.md).
+Do not place real credentials, public addresses, or private deployment details in examples. ROC binary and the old status/command/pending HTTP interfaces are no longer supported.
 
 See the [repository README](../README.md) for architecture, API details, deployment guidance, and current limitations. Local verification records, test-host scripts, and the development plan are intentionally not part of the published repository.

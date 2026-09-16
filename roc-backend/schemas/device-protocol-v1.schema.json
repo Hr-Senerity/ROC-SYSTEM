@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:roc:device-protocol:upstream:v1",
+  "title": "ROC JSON Device Protocol v1 upstream message",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "message_id",
+    "type",
+    "sequence",
+    "timestamp",
+    "payload"
+  ],
+  "properties": {
+    "protocol_version": { "const": 1 },
+    "message_id": { "type": "string", "format": "uuid" },
+    "type": { "enum": ["heartbeat", "telemetry"] },
+    "sequence": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "type": { "const": "heartbeat" },
+        "payload": { "$ref": "#/$defs/heartbeatPayload" }
+      }
+    },
+    {
+      "properties": {
+        "type": { "const": "telemetry" },
+        "payload": { "$ref": "#/$defs/telemetryPayload" }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "libraryVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+    },
+    "heartbeatPayload": {
+      "type": "object",
+      "properties": {
+        "library_version": { "$ref": "#/$defs/libraryVersion" }
+      },
+      "additionalProperties": false
+    },
+    "telemetryPayload": {
+      "type": "object",
+      "required": [
+        "online",
+        "cpu_usage",
+        "memory_usage",
+        "battery_level",
+        "localization_confidence",
+        "position",
+        "velocity"
+      ],
+      "properties": {
+        "library_version": { "$ref": "#/$defs/libraryVersion" },
+        "online": { "type": "boolean" },
+        "cpu_usage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "memory_usage": { "type": "number", "minimum": 0, "maximum": 100 },
+        "battery_level": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "localization_confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+        "position": {
+          "type": "object",
+          "required": ["x", "y", "theta"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "theta": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "velocity": {
+          "type": "object",
+          "required": ["linear", "angular"],
+          "properties": {
+            "linear": { "type": "number" },
+            "angular": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

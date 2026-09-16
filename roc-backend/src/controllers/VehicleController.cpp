@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "db/PostgresClient.h"
+#include "controllers/DeviceWsController.h"
 #include "controllers/StatusWsController.h"
 #include "utils/InputValidation.h"
 #include "utils/JwtHelper.h"
@@ -248,11 +249,20 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg,
           if (respondForAccess(access, cb, "Vehicle")) return;
 
           const auto token = std::string("roc_dev_") + roc::utils::generateSalt(24);
+          const auto tokenHash = roc::utils::sha256Hex(token);
           const auto hint = token.substr(token.size() - 8);
-          pg.executeParams(
-              "UPDATE vehicles SET device_token_hash = $1, device_token_hint = $2, "
-              "device_enabled = true WHERE id = $3::uuid",
-              {roc::utils::sha256Hex(token), hint, vehicleId});
+          const auto vehicle = pg.queryOneParams(
+              std::string("UPDATE vehicles SET device_token_hash = $1, ") +
+                  "device_token_hint = $2, device_enabled = true, status = 'offline', "
+                  "device_protocol_version = NULL, device_library_version = NULL, "
+                  "device_last_sequence = 0, device_connected_at = NULL, "
+                  "device_disconnected_at = NOW(), received_at = NOW(), "
+                  "telemetry_version = telemetry_version + 1 "
+                  "WHERE id = $3::uuid RETURNING " + kVehicleColumns,
+              {tokenHash, hint, vehicleId});
+          roc::ws::StatusWsController::broadcastVehicle("vehicle_updated", vehicle);
+          roc::ws::DeviceWsController::disconnectVehicle(
+              vehicleId, "credential_rotated", tokenHash);
 
           Json::Value response;
           response["ok"] = true;
@@ -318,10 +328,18 @@ void registerVehicleRoutes(const roc::config::AppConfig &cfg,
               pg, vehicleId, (*principal)["user_id"].asString(),
               (*principal)["role"].asString());
           if (respondForAccess(access, cb, "Vehicle")) return;
-          pg.executeParams(
-              "UPDATE vehicles SET device_token_hash = NULL, device_token_hint = NULL, "
-              "device_enabled = false WHERE id = $1::uuid",
+          const auto vehicle = pg.queryOneParams(
+              std::string("UPDATE vehicles SET device_token_hash = NULL, ") +
+                  "device_token_hint = NULL, device_enabled = false, "
+                  "status = 'offline', device_protocol_version = NULL, "
+                  "device_library_version = NULL, device_last_sequence = 0, "
+                  "device_connected_at = NULL, device_disconnected_at = NOW(), "
+                  "received_at = NOW(), telemetry_version = telemetry_version + 1 "
+                  "WHERE id = $1::uuid RETURNING " + kVehicleColumns,
               {vehicleId});
+          roc::ws::StatusWsController::broadcastVehicle("vehicle_updated", vehicle);
+          roc::ws::DeviceWsController::disconnectVehicle(
+              vehicleId, "credential_revoked");
           cb(jsonResp(k200OK, makeResp(true, "Device token revoked")));
         } catch (const std::exception &error) {
           LOG_ERROR << "Revoke device token: " << error.what();
