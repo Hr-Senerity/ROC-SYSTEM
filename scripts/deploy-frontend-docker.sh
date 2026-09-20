@@ -30,13 +30,18 @@ load_frontend_cfg() {
     CONTAINER_PORT="${FRONTEND_CONTAINER_PORT:-80}"
     DOCKERFILE_PATH="${FRONTEND_DOCKERFILE:-docker/frontend/Dockerfile}"
     CONTEXT_PATH="${DOCKER_CONTEXT_PATH:-.}"
+    local backend_host="${BACKEND_HOST:-127.0.0.1}"
+    if [[ "${backend_host}" == "127.0.0.1" || "${backend_host}" == "localhost" ]]; then
+        backend_host="host.docker.internal"
+    fi
+    BACKEND_UPSTREAM_VAL="${FRONTEND_BACKEND_UPSTREAM:-http://${backend_host}:${BACKEND_PORT:-8080}}"
 }
 
 # 构建 Docker 镜像
 build_image() {
     load_frontend_cfg
     log_info "开始构建前端镜像: ${IMAGE_NAME}:latest"
-    docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" "${CONTEXT_PATH}"
+    (cd "${REPO_ROOT}" && docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" "${CONTEXT_PATH}")
     if [ $? -eq 0 ]; then
         log_info "镜像构建成功: ${IMAGE_NAME}:latest"
     else
@@ -74,12 +79,21 @@ run_container() {
     docker run -d \
         --name "${CONTAINER_NAME}" \
         -p "${HOST_PORT}:${CONTAINER_PORT}" \
+        --add-host host.docker.internal:host-gateway \
+        -e "BACKEND_UPSTREAM=${BACKEND_UPSTREAM_VAL}" \
+        --health-cmd "wget -qO- http://127.0.0.1:${CONTAINER_PORT}/api/health >/dev/null || exit 1" \
+        --health-interval 5s \
+        --health-timeout 3s \
+        --health-retries 12 \
+        --health-start-period 5s \
         --restart unless-stopped \
         "${IMAGE_NAME}:latest"
     
     if [ $? -eq 0 ]; then
+        wait_for_container_healthy "${CONTAINER_NAME}" 60
         log_info "容器启动成功"
         log_info "前端容器端口映射: localhost:${HOST_PORT} -> container:${CONTAINER_PORT}"
+        log_info "前端同源 API/WS 上游: ${BACKEND_UPSTREAM_VAL}"
         log_info "查看容器日志: docker logs -f ${CONTAINER_NAME}"
     else
         log_error "容器启动失败"

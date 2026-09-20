@@ -63,3 +63,49 @@ docker_must_exist() {
   docker info >/dev/null 2>&1 || { log_error "Docker 不可用（daemon 未启动或权限不足）"; exit 1; }
 }
 
+docker_compose_must_exist() {
+  if docker compose version >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    return 0
+  fi
+  log_error "缺少 Docker Compose（需要 docker compose v2 或 docker-compose v1）"
+  exit 1
+}
+
+docker_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+  else
+    docker-compose "$@"
+  fi
+}
+
+wait_for_container_healthy() {
+  local container_name="$1"
+  local timeout_seconds="${2:-60}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local state=""
+
+  while (( SECONDS < deadline )); do
+    state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_name}" 2>/dev/null || true)"
+    case "${state}" in
+      healthy|running)
+        log_info "容器健康检查通过: ${container_name} (${state})"
+        return 0
+        ;;
+      unhealthy|exited|dead)
+        log_error "容器启动失败: ${container_name} (${state})"
+        docker logs --tail 80 "${container_name}" 2>/dev/null || true
+        return 1
+        ;;
+    esac
+    sleep 2
+  done
+
+  log_error "等待容器健康超时: ${container_name}（最后状态: ${state:-unknown}）"
+  docker logs --tail 80 "${container_name}" 2>/dev/null || true
+  return 1
+}
+

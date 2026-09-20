@@ -21,7 +21,8 @@ struct DeploymentResult {
 
 class DeploymentService {
  public:
-  DeploymentService(std::string connStr, std::string jwtSecret);
+  DeploymentService(std::string connStr, std::string jwtSecret,
+                    int leaseSeconds = 30 * 60);
 
   std::optional<DeviceIdentity> authenticateDevice(
       const std::string &deviceToken) const;
@@ -69,6 +70,7 @@ class DeploymentService {
  private:
   std::string connStr_;
   std::string jwtSecret_;
+  int leaseSeconds_{30 * 60};
 };
 
 }  // namespace roc::service

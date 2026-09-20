@@ -11,6 +11,10 @@ struct DbConfig {
   std::string name{"roc_db"};
   std::string user{"roc_user"};
   std::string password{};
+  std::string sslMode{"disable"};
+  std::string sslRootCert{};
+  std::string sslCert{};
+  std::string sslKey{};
 };
 
 struct HttpConfig {
@@ -27,6 +31,12 @@ struct RealtimeConfig {
   // Empty in development means any Origin may attempt the authenticated
   // browser handshake. Production must provide an explicit allowlist.
   std::vector<std::string> allowedOrigins;
+  int deviceHeartbeatSeconds{30};
+  int deviceIdleTimeoutSeconds{45};
+};
+
+struct DeploymentConfig {
+  int taskLeaseSeconds{30 * 60};
 };
 
 struct StorageConfig {
@@ -38,6 +48,7 @@ struct AppConfig {
   DbConfig db;
   AuthConfig auth;
   RealtimeConfig realtime;
+  DeploymentConfig deployment;
   StorageConfig storage;
 };
 

@@ -14,6 +14,7 @@ import { ProjectVehiclesPage } from './components/ProjectVehiclesPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { ProtocolsPage } from './components/ProtocolsPage';
 import { RegisterPage } from './components/RegisterPage';
+import { RoadNetworkEditorPage } from './components/RoadNetworkEditorPage';
 import { SuperAdminPage } from './components/SuperAdminPage';
 
 function SessionCheck({ message, onRetry }: { message?: string; onRetry?: () => void }) {
@@ -65,6 +66,7 @@ function AppRoutes() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/guide" element={<ProtocolsPage />} />
       <Route path="/projects/:projectId/maps/:mapId/monitor" element={<ProtectedRoute><MapDetailPage /></ProtectedRoute>} />
+      <Route path="/projects/:projectId/maps/:mapId/edit" element={<ProtectedRoute><RoadNetworkEditorPage /></ProtectedRoute>} />
       <Route path="/project/:projectId/map/:mapId" element={<ProtectedRoute><LegacyMapRedirect /></ProtectedRoute>} />
       <Route path="/project/:projectId" element={<ProtectedRoute><LegacyProjectRedirect /></ProtectedRoute>} />
       <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>

@@ -29,8 +29,6 @@ namespace {
 constexpr std::size_t kMaxDeviceConnections = 512;
 constexpr std::size_t kMaxHeartbeatBytes = 4 * 1024;
 constexpr std::size_t kMaxTelemetryBytes = 16 * 1024;
-constexpr int kHeartbeatIntervalSeconds = 30;
-constexpr int kIdleTimeoutSeconds = 45;
 
 struct DeviceSession {
   std::string vehicleId;
@@ -47,6 +45,8 @@ std::map<drogon::WebSocketConnectionPtr, DeviceSession,
 std::map<std::string, drogon::WebSocketConnectionPtr> g_vehicleConnections;
 std::string g_connStr;
 std::atomic<std::uint64_t> g_serverSequence{0};
+int g_heartbeatIntervalSeconds{30};
+int g_idleTimeoutSeconds{45};
 
 std::uint64_t nextServerSequence() {
   return g_serverSequence.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -137,9 +137,14 @@ void updateSession(const drogon::WebSocketConnectionPtr &connection,
 
 void scheduleIdleCheck(const drogon::WebSocketConnectionPtr &connection,
                        std::uint64_t observedSequence) {
+  int idleTimeoutSeconds = 45;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    idleTimeoutSeconds = g_idleTimeoutSeconds;
+  }
   drogon::app().getLoop()->runAfter(
-      static_cast<double>(kIdleTimeoutSeconds),
-      [connection, observedSequence]() {
+      static_cast<double>(idleTimeoutSeconds),
+      [connection, observedSequence, idleTimeoutSeconds]() {
         bool stale = false;
         {
           std::lock_guard<std::mutex> lock(g_mutex);
@@ -148,7 +153,7 @@ void scheduleIdleCheck(const drogon::WebSocketConnectionPtr &connection,
           const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
               std::chrono::steady_clock::now() - found->second.lastSeen);
           stale = found->second.lastClientSequence == observedSequence &&
-                  elapsed.count() >= kIdleTimeoutSeconds;
+                  elapsed.count() >= idleTimeoutSeconds;
         }
         if (stale) {
           sendError(connection, "heartbeat_timeout",
@@ -166,9 +171,13 @@ void broadcastVehicle(const Json::Value &vehicle) {
 
 }  // namespace
 
-void DeviceWsController::configure(std::string connStr) {
+void DeviceWsController::configure(std::string connStr,
+                                   int heartbeatIntervalSeconds,
+                                   int idleTimeoutSeconds) {
   std::lock_guard<std::mutex> lock(g_mutex);
   g_connStr = std::move(connStr);
+  g_heartbeatIntervalSeconds = heartbeatIntervalSeconds;
+  g_idleTimeoutSeconds = idleTimeoutSeconds;
 }
 
 void DeviceWsController::notifyPendingTasks(const std::string &vehicleId) {
@@ -269,8 +278,15 @@ void DeviceWsController::handleNewConnection(
 
   Json::Value payload;
   payload["vehicle_id"] = authenticated->vehicleId;
-  payload["heartbeat_interval_seconds"] = kHeartbeatIntervalSeconds;
-  payload["idle_timeout_seconds"] = kIdleTimeoutSeconds;
+  int heartbeatIntervalSeconds = 30;
+  int idleTimeoutSeconds = 45;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    heartbeatIntervalSeconds = g_heartbeatIntervalSeconds;
+    idleTimeoutSeconds = g_idleTimeoutSeconds;
+  }
+  payload["heartbeat_interval_seconds"] = heartbeatIntervalSeconds;
+  payload["idle_timeout_seconds"] = idleTimeoutSeconds;
   payload["max_message_bytes"] =
       static_cast<Json::UInt64>(roc::protocol::kMaxDeviceMessageBytes);
   payload["max_heartbeat_bytes"] =

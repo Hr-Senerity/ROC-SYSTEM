@@ -22,7 +22,8 @@ class DeviceWsController : public drogon::WebSocketController<DeviceWsController
     WS_PATH_ADD("/ws/device");
   WS_PATH_LIST_END
 
-  static void configure(std::string connStr);
+  static void configure(std::string connStr, int heartbeatIntervalSeconds,
+                        int idleTimeoutSeconds);
   static void notifyPendingTasks(const std::string &vehicleId);
   static void disconnectVehicle(const std::string &vehicleId,
                                 const std::string &reason,

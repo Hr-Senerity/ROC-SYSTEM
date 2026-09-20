@@ -48,6 +48,10 @@ std::string makeConnStr(const std::string &host,
                         int port,
                         const std::string &db,
                         const std::string &user,
-                        const std::string &password);
+                        const std::string &password,
+                        const std::string &sslMode = "disable",
+                        const std::string &sslRootCert = {},
+                        const std::string &sslCert = {},
+                        const std::string &sslKey = {});
 
 }  // namespace roc::db

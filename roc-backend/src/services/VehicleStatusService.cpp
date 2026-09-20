@@ -14,7 +14,9 @@ constexpr const char *kVehicleColumns =
     "id, user_id, project_id, map_id, name, ip, status, cpu, memory, battery, "
     "localization_confidence, position_x, position_y, position_theta, "
     "velocity_linear, velocity_angular, delivery_path, last_heartbeat, "
-    "telemetry_version::text AS version, received_at, created_at";
+    "telemetry_version::text AS version, received_at, created_at, "
+    "device_enabled, device_token_hint, delivered_road_revision_id, "
+    "delivered_map_artifact_id";
 
 std::string numberText(double value) {
   std::ostringstream output;

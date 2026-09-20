@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, Upload } from 'lucide-react';
 import { apiRequest } from '../shared/api/client';
 import { Alert, AlertDescription } from './ui/alert';
@@ -18,15 +18,6 @@ interface MapUploadModalProps {
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
 
-function readDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('读取文件失败'));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
-}
-
 export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUploadModalProps) {
   const [name, setName] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -35,9 +26,15 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const selectFile = async (selectedFile?: File) => {
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview);
+  }, [preview]);
+
+  const selectFile = (selectedFile?: File) => {
     if (!selectedFile) return;
     setError('');
+    setFile(null);
+    setPreview('');
     if (!ALLOWED_IMAGE_TYPES.has(selectedFile.type)) {
       setError('仅支持 PNG 或 JPEG 图片');
       return;
@@ -47,9 +44,8 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
       return;
     }
     try {
-      const dataUrl = await readDataUrl(selectedFile);
       setFile(selectedFile);
-      setPreview(dataUrl);
+      setPreview(URL.createObjectURL(selectedFile));
       if (!name.trim()) setName(selectedFile.name.replace(/\.[^.]+$/, ''));
     } catch (readError) {
       setError(readError instanceof Error ? readError.message : '读取文件失败');
@@ -66,12 +62,13 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
     setUploading(true);
     setError('');
     try {
-      const dataUrl = preview || await readDataUrl(file);
-      const imageBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+      const body = new FormData();
+      body.append('name', normalizedName);
+      body.append('image', file, file.name);
       await apiRequest(`/api/projects/${projectId}/maps/upload`, {
         method: 'POST',
         token,
-        body: JSON.stringify({ name: normalizedName, image_base64: imageBase64 }),
+        body,
       });
       onClose();
       onUploaded();
@@ -126,7 +123,7 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
               ref={fileRef}
               type="file"
               accept="image/png,image/jpeg"
-              onChange={(event) => void selectFile(event.target.files?.[0])}
+              onChange={(event) => selectFile(event.target.files?.[0])}
               className="sr-only"
               aria-label="选择地图图片文件"
             />

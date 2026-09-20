@@ -1,0 +1,506 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ROC Platform REST API",
+    "version": "1.0.0",
+    "description": "JSON-only account, project, vehicle and deployment API. Browser/account calls use account JWTs. Device task calls use a per-vehicle Device token and, after accept, X-Task-Lease. WebSocket contracts remain in the JSON Schema files and are not REST operations."
+  },
+  "servers": [
+    { "url": "/", "description": "Same-origin API gateway" }
+  ],
+  "security": [
+    { "accountBearer": [] }
+  ],
+  "tags": [
+    { "name": "Health" },
+    { "name": "Auth" },
+    { "name": "Projects" },
+    { "name": "Maps" },
+    { "name": "Road networks" },
+    { "name": "Vehicles" },
+    { "name": "Deployments" },
+    { "name": "Device tasks" },
+    { "name": "Administration" }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "tags": ["Health"],
+        "summary": "Process liveness",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" } }
+      }
+    },
+    "/api/db/ping": {
+      "get": {
+        "operationId": "getDatabaseReadiness",
+        "tags": ["Health"],
+        "summary": "Database readiness",
+        "security": [],
+        "responses": {
+          "200": { "$ref": "#/components/responses/JsonSuccess" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "operationId": "registerAccount",
+        "tags": ["Auth"],
+        "summary": "Register a regular account",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterRequest" } } }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/AuthSuccess" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "operationId": "loginAccount",
+        "tags": ["Auth"],
+        "summary": "Login with username and password",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/AuthSuccess" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "operationId": "getCurrentAccount",
+        "tags": ["Auth"],
+        "summary": "Read the current account",
+        "responses": {
+          "200": { "$ref": "#/components/responses/JsonSuccess" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "operationId": "changePassword",
+        "tags": ["Auth"],
+        "summary": "Change the current account password",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" } } }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/JsonSuccess" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logoutAccount",
+        "tags": ["Auth"],
+        "summary": "Acknowledge client-side JWT logout",
+        "security": [],
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" } }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "tags": ["Projects"],
+        "summary": "List accessible projects",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createProject",
+        "tags": ["Projects"],
+        "summary": "Create a project",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectWrite" } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "operationId": "getProject",
+        "tags": ["Projects"],
+        "summary": "Read a project",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "patch": {
+        "operationId": "updateProject",
+        "tags": ["Projects"],
+        "summary": "Update project name or description",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectWrite" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "deleteProject",
+        "tags": ["Projects"],
+        "summary": "Delete a project",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{id}/maps": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "operationId": "listProjectMaps",
+        "tags": ["Maps"],
+        "summary": "List project maps",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{pid}/maps/{mid}": {
+      "parameters": [{ "$ref": "#/components/parameters/Pid" }, { "$ref": "#/components/parameters/Mid" }],
+      "get": {
+        "operationId": "getProjectMap",
+        "tags": ["Maps"],
+        "summary": "Read map metadata",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "patch": {
+        "operationId": "updateProjectMap",
+        "tags": ["Maps"],
+        "summary": "Update map metadata or the legacy road-network snapshot",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MapPatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "deleteProjectMap",
+        "tags": ["Maps"],
+        "summary": "Delete an unbound map without delivery history",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{pid}/maps/{mid}/image": {
+      "parameters": [{ "$ref": "#/components/parameters/Pid" }, { "$ref": "#/components/parameters/Mid" }],
+      "get": {
+        "operationId": "getProjectMapImage",
+        "tags": ["Maps"],
+        "summary": "Download the protected map image",
+        "responses": {
+          "200": { "description": "PNG or JPEG bytes", "content": { "image/png": { "schema": { "type": "string", "contentEncoding": "binary" } }, "image/jpeg": { "schema": { "type": "string", "contentEncoding": "binary" } } } },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/projects/{id}/maps/upload": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": {
+        "operationId": "uploadProjectMap",
+        "tags": ["Maps"],
+        "summary": "Upload a PNG/JPEG map and create immutable artifact v1",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "image"],
+                "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 128 }, "image": { "type": "string", "contentEncoding": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "413": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{pid}/default-map": {
+      "parameters": [{ "$ref": "#/components/parameters/Pid" }],
+      "put": {
+        "operationId": "setProjectDefaultMap",
+        "tags": ["Maps"],
+        "summary": "Set the platform default map",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["map_id"], "properties": { "map_id": { "$ref": "#/components/schemas/Uuid" } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/maps/{mapId}/artifacts": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/MapId" }],
+      "get": {
+        "operationId": "listMapArtifacts",
+        "tags": ["Maps"],
+        "summary": "List immutable map artifacts",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "materializeMapArtifact",
+        "tags": ["Maps"],
+        "summary": "Idempotently materialize a legacy map image as an artifact",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "201": { "$ref": "#/components/responses/JsonSuccess" }, "404": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/maps/{mapId}/road-network/revisions": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/MapId" }],
+      "get": {
+        "operationId": "listRoadNetworkRevisions",
+        "tags": ["Road networks"],
+        "summary": "List saved road-network revisions",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createRoadNetworkRevision",
+        "tags": ["Road networks"],
+        "summary": "Validate and save an immutable road-network revision",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["network"], "properties": { "network": { "$ref": "./road-network-v1.schema.json" } } } } }
+        },
+        "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/MapId" }, { "$ref": "#/components/parameters/RevisionId" }],
+      "get": {
+        "operationId": "getRoadNetworkRevision",
+        "tags": ["Road networks"],
+        "summary": "Read a saved road-network revision",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/vehicles": {
+      "get": {
+        "operationId": "listVehicles",
+        "tags": ["Vehicles"],
+        "summary": "List accessible vehicles",
+        "parameters": [{ "name": "project_id", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Uuid" } }],
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createVehicle",
+        "tags": ["Vehicles"],
+        "summary": "Create a vehicle",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VehicleCreate" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/vehicles/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "patch": {
+        "operationId": "updateVehicle",
+        "tags": ["Vehicles"],
+        "summary": "Update vehicle metadata or administrative telemetry",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VehiclePatch" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "deleteVehicle",
+        "tags": ["Vehicles"],
+        "summary": "Delete a vehicle",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/vehicles/{id}/device-token": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "operationId": "getDeviceTokenStatus",
+        "tags": ["Vehicles"],
+        "summary": "Read Device token status and hint",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "rotateDeviceToken",
+        "tags": ["Vehicles"],
+        "summary": "Issue or rotate a Device token; plaintext is returned once",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "revokeDeviceToken",
+        "tags": ["Vehicles"],
+        "summary": "Revoke the Device token and disconnect the device",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/deployments": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }],
+      "post": {
+        "operationId": "createDeployment",
+        "tags": ["Deployments"],
+        "summary": "Create one immutable resource deployment batch",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeploymentCreate" } } } },
+        "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/deployments/{batchId}": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/BatchId" }],
+      "get": {
+        "operationId": "getDeployment",
+        "tags": ["Deployments"],
+        "summary": "Read a batch and its per-vehicle tasks",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/deployments/{batchId}/cancel": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/BatchId" }],
+      "post": {
+        "operationId": "cancelDeployment",
+        "tags": ["Deployments"],
+        "summary": "Cancel all cancellable tasks in a batch",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/device/tasks/{taskId}/accept": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }],
+      "post": {
+        "operationId": "acceptDeviceTask",
+        "tags": ["Device tasks"],
+        "summary": "Accept a task and receive or replay its lease",
+        "security": [{ "deviceBearer": [] }],
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/device/tasks/{taskId}/manifest": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }, { "$ref": "#/components/parameters/TaskLease" }],
+      "get": {
+        "operationId": "getDeviceTaskManifest",
+        "tags": ["Device tasks"],
+        "summary": "Read the immutable resource manifest",
+        "security": [{ "deviceBearer": [] }],
+        "responses": {
+          "200": { "description": "Manifest", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/manifestResponse" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/device/tasks/{taskId}/artifact": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }, { "$ref": "#/components/parameters/TaskLease" }],
+      "get": {
+        "operationId": "downloadDeviceTaskArtifact",
+        "tags": ["Device tasks"],
+        "summary": "Download a full road JSON or original map image",
+        "description": "Range requests are intentionally rejected with 416; clients must download the complete immutable artifact and verify X-Content-SHA256.",
+        "security": [{ "deviceBearer": [] }],
+        "responses": {
+          "200": { "description": "Complete immutable artifact", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, "content": { "application/vnd.roc.road-network+json": { "schema": { "$ref": "./road-network-v1.schema.json" } }, "image/png": { "schema": { "type": "string", "contentEncoding": "binary" } }, "image/jpeg": { "schema": { "type": "string", "contentEncoding": "binary" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "416": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/device/tasks/{taskId}/status": {
+      "parameters": [{ "$ref": "#/components/parameters/TaskId" }, { "$ref": "#/components/parameters/TaskLease" }],
+      "post": {
+        "operationId": "updateDeviceTaskStatus",
+        "tags": ["Device tasks"],
+        "summary": "Idempotently report download or delivery status",
+        "security": [{ "deviceBearer": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/statusRequest" } } } },
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "operationId": "listAdminUsers",
+        "tags": ["Administration"],
+        "summary": "List all accounts (super administrator only)",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "role", "in": "query", "schema": { "enum": ["super_admin", "regular"] } },
+          { "name": "status", "in": "query", "schema": { "enum": ["active", "disabled"] } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/users/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "operationId": "getAdminUser",
+        "tags": ["Administration"],
+        "summary": "Read account details and statistics",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      },
+      "delete": {
+        "operationId": "deleteAdminUser",
+        "tags": ["Administration"],
+        "summary": "Delete another account",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/users/{id}/status": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "patch": {
+        "operationId": "updateAdminUserStatus",
+        "tags": ["Administration"],
+        "summary": "Enable or disable another account",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["status"], "properties": { "status": { "enum": ["active", "disabled"] } } } } } },
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/users/{id}/vehicles": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": {
+        "operationId": "listAdminUserVehicles",
+        "tags": ["Administration"],
+        "summary": "List vehicles owned by an account",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/stats": {
+      "get": {
+        "operationId": "getAdminStats",
+        "tags": ["Administration"],
+        "summary": "Read platform totals",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "accountBearer": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Account JWT returned by login or registration." },
+      "deviceBearer": { "type": "http", "scheme": "bearer", "description": "Per-vehicle Device token returned once when issued or rotated." }
+    },
+    "parameters": {
+      "Id": { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "Pid": { "name": "pid", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "Mid": { "name": "mid", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "ProjectId": { "name": "projectId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "MapId": { "name": "mapId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "RevisionId": { "name": "revisionId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "BatchId": { "name": "batchId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "TaskId": { "name": "taskId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },
+      "TaskLease": { "name": "X-Task-Lease", "in": "header", "required": true, "schema": { "type": "string", "minLength": 16 }, "description": "Opaque task lease returned by accept." }
+    },
+    "schemas": {
+      "Uuid": { "type": "string", "format": "uuid" },
+      "JsonSuccess": { "type": "object", "required": ["ok"], "properties": { "ok": { "const": true } }, "additionalProperties": true },
+      "Error": { "type": "object", "required": ["ok"], "properties": { "ok": { "const": false }, "code": { "type": "string" }, "message": { "type": "string" }, "error": { "type": "string" } }, "additionalProperties": true },
+      "RegisterRequest": { "type": "object", "additionalProperties": false, "required": ["username", "email", "password"], "properties": { "username": { "type": "string", "minLength": 1, "maxLength": 64 }, "email": { "type": "string", "format": "email", "maxLength": 128 }, "password": { "type": "string", "minLength": 6 } } },
+      "LoginRequest": { "type": "object", "additionalProperties": false, "required": ["username", "password"], "properties": { "username": { "type": "string" }, "password": { "type": "string" } } },
+      "ChangePasswordRequest": { "type": "object", "additionalProperties": false, "required": ["old_password", "new_password"], "properties": { "old_password": { "type": "string" }, "new_password": { "type": "string", "minLength": 6 } } },
+      "AuthSuccess": { "type": "object", "required": ["ok", "token", "user"], "properties": { "ok": { "const": true }, "token": { "type": "string" }, "user": { "type": "object" } }, "additionalProperties": false },
+      "ProjectWrite": { "type": "object", "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 128 }, "description": { "type": "string" } }, "additionalProperties": false },
+      "MapPatch": { "type": "object", "minProperties": 1, "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 128 }, "coordinate_origin_x": { "type": "number" }, "coordinate_origin_y": { "type": "number" }, "resolution": { "type": "number", "exclusiveMinimum": 0 }, "origin_theta": { "type": "number" }, "road_network": { "$ref": "./road-network-v1.schema.json" } }, "additionalProperties": false },
+      "VehicleCreate": { "type": "object", "additionalProperties": false, "required": ["name", "ip"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 64 }, "ip": { "type": "string", "maxLength": 45 }, "project_id": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }, "map_id": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] } } },
+      "VehiclePatch": { "type": "object", "minProperties": 1, "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 64 }, "ip": { "type": "string", "maxLength": 45 }, "status": { "enum": ["online", "offline", "error"] }, "map_id": { "oneOf": [{ "$ref": "#/components/schemas/Uuid" }, { "type": "null" }] }, "cpu": { "type": "number", "minimum": 0, "maximum": 100 }, "memory": { "type": "number", "minimum": 0, "maximum": 100 }, "battery": { "type": "number", "minimum": 0, "maximum": 100 }, "localization_confidence": { "type": "number", "minimum": 0, "maximum": 100 }, "position_x": { "type": "number" }, "position_y": { "type": "number" }, "position_theta": { "type": "number" }, "velocity_linear": { "type": "number" }, "velocity_angular": { "type": "number" }, "delivery_path": { "type": ["array", "object", "null"] } }, "additionalProperties": false },
+      "DeploymentCreate": { "type": "object", "additionalProperties": false, "required": ["resource_type", "resource_revision_id", "vehicle_ids", "idempotency_key"], "properties": { "resource_type": { "enum": ["road_network", "map"] }, "resource_revision_id": { "$ref": "#/components/schemas/Uuid" }, "vehicle_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/components/schemas/Uuid" } }, "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 } } }
+    },
+    "responses": {
+      "JsonSuccess": { "description": "Successful JSON response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JsonSuccess" } } } },
+      "AuthSuccess": { "description": "Authentication succeeded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthSuccess" } } } },
+      "Error": { "description": "Structured error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    }
+  }
+}

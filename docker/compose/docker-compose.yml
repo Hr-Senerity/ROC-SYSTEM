@@ -49,16 +49,24 @@ services:
       DB_NAME: ${DB_NAME:-roc_db}
       DB_USER: ${DB_USER:-roc_user}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in docker/compose/.env}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      DB_SSLCERT: ${DB_SSLCERT:-}
+      DB_SSLKEY: ${DB_SSLKEY:-}
       JWT_SECRET: ${JWT_SECRET:-roc-system-default-secret-change-in-production}
       JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
       WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
+      DEVICE_HEARTBEAT_SECONDS: ${DEVICE_HEARTBEAT_SECONDS:-30}
+      DEVICE_IDLE_TIMEOUT_SECONDS: ${DEVICE_IDLE_TIMEOUT_SECONDS:-45}
+      TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-1800}
       MAP_STORAGE_DIR: /app/static/maps
     ports:
       - "${BACKEND_DOCKER_HOST_PORT:-8080}:8080"
     volumes:
       - roc_static:/app/static
+      - ./certs/postgres:/run/secrets/roc-db:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/db/ping || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -77,10 +85,15 @@ services:
         NPM_MIRROR: ${NPM_MIRROR:-default}
     container_name: roc-frontend
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_UPSTREAM: http://backend:8080
     ports:
       - "${FRONTEND_DOCKER_HOST_PORT:-3000}:80"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/api/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -26,6 +26,8 @@ add_executable(roc-backend-server
   src/utils/JwtHelper.cpp
   src/utils/JwtHelper.h
   src/utils/InputValidation.h
+  src/utils/ImageMetadata.cpp
+  src/utils/ImageMetadata.h
   src/models/User.h
   src/controllers/AuthController.cpp
   src/controllers/AuthController.h
@@ -33,6 +35,10 @@ add_executable(roc-backend-server
   src/controllers/AdminController.h
   src/controllers/ProjectController.cpp
   src/controllers/ProjectController.h
+  src/controllers/MapArtifactController.cpp
+  src/controllers/MapArtifactController.h
+  src/controllers/RoadNetworkController.cpp
+  src/controllers/RoadNetworkController.h
   src/controllers/VehicleController.cpp
   src/controllers/VehicleController.h
   src/controllers/StatusWsController.cpp
@@ -43,6 +49,8 @@ add_executable(roc-backend-server
   src/controllers/DeploymentController.h
   src/services/DeploymentService.cpp
   src/services/DeploymentService.h
+  src/services/RoadNetworkService.cpp
+  src/services/RoadNetworkService.h
   src/services/VehicleStatusService.cpp
   src/services/VehicleStatusService.h
   src/middleware/AuthMiddleware.cpp
@@ -69,4 +77,40 @@ if(BUILD_TESTING)
   target_include_directories(device-protocol-tests PRIVATE src)
   target_link_libraries(device-protocol-tests PRIVATE PkgConfig::JSONCPP)
   add_test(NAME device-protocol-tests COMMAND device-protocol-tests)
+
+  add_executable(road-network-tests
+    tests/RoadNetworkTests.cpp
+    src/services/RoadNetworkService.cpp
+  )
+  target_include_directories(road-network-tests PRIVATE src)
+  target_link_libraries(road-network-tests PRIVATE PkgConfig::JSONCPP)
+  add_test(NAME road-network-tests COMMAND road-network-tests)
+
+  add_executable(image-metadata-tests
+    tests/ImageMetadataTests.cpp
+    src/utils/ImageMetadata.cpp
+  )
+  target_include_directories(image-metadata-tests PRIVATE src)
+  add_test(NAME image-metadata-tests COMMAND image-metadata-tests)
+
+  add_executable(postgres-config-tests
+    tests/PostgresConfigTests.cpp
+    src/config/AppConfig.cpp
+    src/db/PostgresClient.cpp
+  )
+  target_include_directories(postgres-config-tests PRIVATE src)
+  target_link_libraries(postgres-config-tests PRIVATE
+    PkgConfig::PQXX
+    PkgConfig::JSONCPP
+  )
+  add_test(NAME postgres-config-tests COMMAND postgres-config-tests)
+
+  add_executable(api-contract-tests
+    tests/ApiContractTests.cpp
+  )
+  target_compile_definitions(api-contract-tests PRIVATE
+    ROC_SCHEMA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/schemas"
+  )
+  target_link_libraries(api-contract-tests PRIVATE PkgConfig::JSONCPP)
+  add_test(NAME api-contract-tests COMMAND api-contract-tests)
 endif()

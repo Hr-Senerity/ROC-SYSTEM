@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, Battery, Download, Focus, Gauge, Layers3, Maximize2, Minimize2,
+  ArrowLeft, Battery, Download, Edit3, Focus, Gauge, Layers3, Maximize2, Minimize2,
   RefreshCw, Search, Truck, WifiOff, X,
 } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -223,6 +223,7 @@ export function MapDetailPage() {
         <Button variant="outline" size="sm" onClick={() => zoomAt({ x: viewport.width / 2, y: viewport.height / 2 }, zoom * 1.2)} aria-label="放大">＋</Button>
         <Button variant="outline" size="sm" onClick={resetView}><Focus />适应视图</Button>
         <Button variant="outline" size="sm" disabled={mappedRoad.length === 0} onClick={exportRoad}><Download />导出路网</Button>
+        <Button variant="outline" size="sm" asChild><Link to={`/projects/${projectId}/maps/${mapId}/edit`}><Edit3 />编辑路网</Link></Button>
         <span className="ml-auto hidden items-center gap-1.5 text-xs text-slate-500 md:flex"><Layers3 className="size-4" />底图 / 路网 / 车辆</span>
         <Button variant="outline" size="icon" onClick={() => setFocused((value) => !value)} aria-label={focused ? '退出专注模式' : '进入专注模式'}>{focused ? <Minimize2 /> : <Maximize2 />}</Button>
       </div>

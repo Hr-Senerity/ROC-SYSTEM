@@ -154,15 +154,34 @@ std::string makeConnStr(const std::string &host,
                         int port,
                         const std::string &db,
                         const std::string &user,
-                        const std::string &password) {
+                        const std::string &password,
+                        const std::string &sslMode,
+                        const std::string &sslRootCert,
+                        const std::string &sslCert,
+                        const std::string &sslKey) {
+  const auto quote = [](const std::string &value) {
+    std::string quoted{"'"};
+    quoted.reserve(value.size() + 2);
+    for (const char character : value) {
+      if (character == '\\' || character == '\'') quoted += '\\';
+      quoted += character;
+    }
+    quoted += '\'';
+    return quoted;
+  };
+
   std::string s;
-  s += "host=" + host;
+  s += "host=" + quote(host);
   s += " port=" + std::to_string(port);
-  s += " dbname=" + db;
-  s += " user=" + user;
+  s += " dbname=" + quote(db);
+  s += " user=" + quote(user);
   if (!password.empty()) {
-    s += " password=" + password;
+    s += " password=" + quote(password);
   }
+  s += " sslmode=" + quote(sslMode);
+  if (!sslRootCert.empty()) s += " sslrootcert=" + quote(sslRootCert);
+  if (!sslCert.empty()) s += " sslcert=" + quote(sslCert);
+  if (!sslKey.empty()) s += " sslkey=" + quote(sslKey);
   s += " connect_timeout=3";
   return s;
 }

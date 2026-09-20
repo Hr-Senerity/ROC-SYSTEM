@@ -10,6 +10,8 @@
 #include "controllers/DeviceWsController.h"
 #include "controllers/DeploymentController.h"
 #include "controllers/ProjectController.h"
+#include "controllers/MapArtifactController.h"
+#include "controllers/RoadNetworkController.h"
 #include "controllers/StatusWsController.h"
 #include "controllers/VehicleController.h"
 #include "db/PostgresClient.h"
@@ -39,7 +41,8 @@ int main() {
 
   const auto connStr = roc::db::makeConnStr(
       config.db.host, config.db.port, config.db.name, config.db.user,
-      config.db.password);
+      config.db.password, config.db.sslMode, config.db.sslRootCert,
+      config.db.sslCert, config.db.sslKey);
 
   app().registerHandler(
       "/api/health",
@@ -64,7 +67,8 @@ int main() {
           value["ok"] = true;
           callback(jsonResp(value));
         } catch (const std::exception &error) {
-          value["error"] = error.what();
+          LOG_ERROR << "Database readiness check failed: " << error.what();
+          value["error"] = "database unavailable";
           callback(jsonResp(value, 500));
         }
       },
@@ -73,12 +77,16 @@ int main() {
   roc::controller::registerAuthRoutes(config, connStr);
   roc::controller::registerAdminRoutes(config, connStr);
   roc::controller::registerProjectRoutes(config, connStr);
+  roc::controller::registerMapArtifactRoutes(config, connStr);
+  roc::controller::registerRoadNetworkRoutes(config, connStr);
   roc::controller::registerVehicleRoutes(config, connStr);
   roc::controller::registerDeploymentRoutes(config, connStr);
 
   roc::ws::StatusWsController::configure(
       config.auth.jwtSecret, connStr, config.realtime.allowedOrigins);
-  roc::ws::DeviceWsController::configure(connStr);
+  roc::ws::DeviceWsController::configure(
+      connStr, config.realtime.deviceHeartbeatSeconds,
+      config.realtime.deviceIdleTimeoutSeconds);
 
   LOG_INFO << "Starting roc-backend on " << config.http.listenHost << ":"
            << config.http.listenPort;
@@ -88,6 +96,8 @@ int main() {
   // Uploaded map bytes remain outside the document root and are served only
   // through authenticated project routes.
   app().setDocumentRoot("./public");
+  // 10 MiB image payload plus bounded multipart headers.
+  app().setClientMaxBodySize(11 * 1024 * 1024);
   app().addListener(config.http.listenHost,
                     static_cast<std::uint16_t>(config.http.listenPort));
   app().run();

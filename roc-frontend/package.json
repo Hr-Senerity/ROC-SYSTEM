@@ -2,12 +2,14 @@
   "name": "roc-frontend",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.15.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run src",
+    "test:e2e": "playwright test",
     "build": "pnpm run typecheck && vite build"
   },
   "dependencies": {
@@ -57,6 +59,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
+    "@playwright/test": "1.55.0",
     "@tailwindcss/vite": "^4.1.3",
     "@types/node": "^20.17.0",
     "@types/react": "^18.3.1",
@@ -69,6 +72,5 @@
     "typescript-eslint": "^8.30.1",
     "vite": "6.3.5",
     "vitest": "^3.1.1"
-  },
-  "packageManager": "pnpm@10.15.1"
+  }
 }

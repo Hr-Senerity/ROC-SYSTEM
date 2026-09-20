@@ -36,6 +36,7 @@ EOF
 check_prereqs() {
   require_cmd docker
   docker_must_exist
+  docker_compose_must_exist
 
   if [[ ! -f "$COMPOSE_FILE" ]]; then
     log_error "未找到 compose 文件: $COMPOSE_FILE"
@@ -55,7 +56,7 @@ check_prereqs() {
 do_up() {
   log_info "构建并启动所有服务..."
   cd "$COMPOSE_DIR"
-  docker compose -f "$COMPOSE_FILE" up -d --build
+  docker_compose -f "$COMPOSE_FILE" up -d --build
   log_info "所有服务已启动"
   echo ""
   log_info "访问: 前端 http://localhost:3000  后端 http://localhost:8080"
@@ -64,28 +65,28 @@ do_up() {
 do_down() {
   log_info "停止并移除所有服务..."
   cd "$COMPOSE_DIR"
-  docker compose -f "$COMPOSE_FILE" down
+  docker_compose -f "$COMPOSE_FILE" down
 }
 
 do_build() {
   log_info "重新构建镜像..."
   cd "$COMPOSE_DIR"
-  docker compose -f "$COMPOSE_FILE" build --no-cache
+  docker_compose -f "$COMPOSE_FILE" build --no-cache
 }
 
 do_restart() {
   cd "$COMPOSE_DIR"
-  docker compose -f "$COMPOSE_FILE" restart
+  docker_compose -f "$COMPOSE_FILE" restart
 }
 
 do_logs() {
   cd "$COMPOSE_DIR"
-  docker compose -f "$COMPOSE_FILE" logs -f --tail=100
+  docker_compose -f "$COMPOSE_FILE" logs -f --tail=100
 }
 
 do_status() {
   cd "$COMPOSE_DIR"
-  docker compose -f "$COMPOSE_FILE" ps
+  docker_compose -f "$COMPOSE_FILE" ps
 }
 
 if [[ $# -eq 0 ]]; then

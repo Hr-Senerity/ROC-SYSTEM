@@ -20,6 +20,10 @@ function vehicle(id: string, version: string, battery: number): Vehicle {
     version,
     receivedAt: null,
     lastHeartbeat: null,
+    deviceEnabled: false,
+    deviceTokenHint: null,
+    deliveredRoadRevisionId: null,
+    deliveredMapArtifactId: null,
   };
 }
 

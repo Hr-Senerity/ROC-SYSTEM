@@ -16,8 +16,6 @@
 namespace roc::service {
 namespace {
 
-constexpr int kLeaseSeconds = 30 * 60;
-
 DeploymentResult fail(int status, const std::string &code,
                       const std::string &message) {
   DeploymentResult result;
@@ -213,8 +211,15 @@ DeploymentResult authorizedTask(pqxx::work &tx, const DeviceIdentity &device,
 }  // namespace
 
 DeploymentService::DeploymentService(std::string connStr,
-                                     std::string jwtSecret)
-    : connStr_(std::move(connStr)), jwtSecret_(std::move(jwtSecret)) {}
+                                     std::string jwtSecret,
+                                     int leaseSeconds)
+    : connStr_(std::move(connStr)),
+      jwtSecret_(std::move(jwtSecret)),
+      leaseSeconds_(leaseSeconds) {
+  if (leaseSeconds_ < 1 || leaseSeconds_ > 86400) {
+    throw std::invalid_argument("leaseSeconds must be between 1 and 86400");
+  }
+}
 
 std::optional<DeviceIdentity> DeploymentService::authenticateDevice(
     const std::string &deviceToken) const {
@@ -463,7 +468,7 @@ DeploymentResult DeploymentService::acceptTask(
                 "Task exceeded its delivery attempt limit");
   }
 
-  const auto expiresAt = now + kLeaseSeconds;
+  const auto expiresAt = now + leaseSeconds_;
   const auto token =
       makeLease(jwtSecret_, taskId, device.vehicleId, attempt, expiresAt);
   tx.exec_params(

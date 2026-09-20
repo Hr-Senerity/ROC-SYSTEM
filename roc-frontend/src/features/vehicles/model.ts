@@ -17,6 +17,10 @@ export interface Vehicle {
   version: string;
   receivedAt: string | null;
   lastHeartbeat: string | null;
+  deviceEnabled: boolean;
+  deviceTokenHint: string | null;
+  deliveredRoadRevisionId: string | null;
+  deliveredMapArtifactId: string | null;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -88,6 +92,10 @@ export function parseVehicle(value: unknown): Vehicle {
     version: typeof source.version === 'string' ? source.version : String(source.version ?? '0'),
     receivedAt: nullableString(source.received_at),
     lastHeartbeat: nullableString(source.last_heartbeat),
+    deviceEnabled: source.device_enabled === true,
+    deviceTokenHint: nullableString(source.device_token_hint),
+    deliveredRoadRevisionId: nullableString(source.delivered_road_revision_id),
+    deliveredMapArtifactId: nullableString(source.delivered_map_artifact_id),
   };
 }
 

@@ -15,11 +15,14 @@ const credentialEndpoints = [
 const taskEndpoints = [
   { method: 'POST', path: '/api/device/tasks/{task_id}/accept', purpose: '接受任务并取得 30 分钟租约；重复接受返回同一租约' },
   { method: 'GET', path: '/api/device/tasks/{task_id}/manifest', purpose: '读取资源类型、版本、大小、SHA-256 和制品地址' },
-  { method: 'GET', path: '/api/device/tasks/{task_id}/artifact', purpose: '下载道路 JSON 或原始地图图片；必须携带有效租约' },
+  { method: 'GET', path: '/api/device/tasks/{task_id}/artifact', purpose: '完整下载道路 JSON 或原始地图图片；携带 Range 返回 416' },
   { method: 'POST', path: '/api/device/tasks/{task_id}/status', purpose: '幂等回报下载、交付、完成或失败状态' },
 ] as const;
 
 const accountTaskEndpoints = [
+  { method: 'POST', path: '/api/projects/{project_id}/maps/upload', purpose: 'multipart 上传 name + PNG/JPEG image，并自动创建不可变地图 v1 制品' },
+  { method: 'GET', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '列出地图制品版本、MIME、大小、尺寸和 SHA-256' },
+  { method: 'POST', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '把旧地图当前原图幂等固化为不可变制品版本' },
   { method: 'POST', path: '/api/projects/{project_id}/deployments', purpose: '账户按不可变资源版本和车辆列表创建批次' },
   { method: 'GET', path: '/api/projects/{project_id}/deployments/{batch_id}', purpose: '读取批次与逐车任务状态' },
   { method: 'POST', path: '/api/projects/{project_id}/deployments/{batch_id}/cancel', purpose: '取消尚未进入最终交付阶段的任务' },
@@ -321,7 +324,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                 </section>
 
                 <section className="rounded-xl border border-blue-200 bg-blue-50/70 p-4">
-                  <SectionTitle description="账户接口使用 Bearer ACCOUNT_JWT，并校验项目所有权；idempotency_key 在项目和创建者范围内去重。">账户端批次接口</SectionTitle>
+                  <SectionTitle description="账户接口使用 Bearer ACCOUNT_JWT 并校验项目权限；地图上传使用 multipart/form-data 的 name 与 image 字段，部署 idempotency_key 在项目和创建者范围内去重。">账户端资源与批次接口</SectionTitle>
                   <div className="mt-4 divide-y divide-blue-200/70 border-t border-blue-200/70">
                     {accountTaskEndpoints.map((endpoint) => (
                       <div key={`${endpoint.method}-${endpoint.path}`} className="grid gap-2 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
@@ -351,6 +354,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                     <li><code>event_id</code> 全局唯一；同一事件重试返回当前任务，不重复写事件。</li>
                     <li>租约为 30 分钟；接受/下载阶段超时且未超过三次可重新投递，交付中超时进入失败。</li>
                     <li>道路制品返回 JSON；地图制品返回平台上传的原始图片。响应头 <code>X-Content-SHA256</code> 与 manifest 一致。</li>
+                    <li>制品只支持完整下载，携带 <code>Range</code> 会返回 416；车端必须校验字节数、MIME 和 SHA-256，截断或哈希不匹配时回报 <code>failed</code>。</li>
                     <li>平台“已送达”只表示车端已校验并保存/交给本地适配器，不表示地图已被车辆加载或应用。</li>
                   </ul>
                 </section>
@@ -392,7 +396,12 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
               </div>
             )}
 
-            <aside className="mt-8 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+            <aside className="mt-8 flex gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+              <Braces className="mt-0.5 size-5 shrink-0 text-blue-700" aria-hidden="true" />
+              <p><strong className="text-slate-950">机器可读合同：</strong> REST API 见 <code>roc-backend/schemas/openapi-v1.json</code>；设备通信、路网与下发任务分别见同目录下的三份 v1 JSON Schema。</p>
+            </aside>
+
+            <aside className="mt-4 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
               <ShieldAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
               <p><strong>Demo 边界：</strong>公网 HTTP/WS 只用于测试账号和测试数据。正式部署必须启用 HTTPS/WSS、Origin 白名单并轮换 JWT 密钥、测试密码和 Device token。</p>
             </aside>

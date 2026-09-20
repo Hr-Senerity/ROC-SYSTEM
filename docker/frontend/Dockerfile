@@ -23,11 +23,14 @@ RUN pnpm run build
 # 第二阶段：运行阶段
 FROM nginx:alpine
 
+ENV BACKEND_UPSTREAM=http://roc-backend:8080
+ENV NGINX_ENVSUBST_FILTER=^BACKEND_UPSTREAM$
+
 # 复制构建产物到 nginx 目录
 COPY --from=builder /app/build /usr/share/nginx/html
 
-# 复制 nginx 配置文件
-COPY docker/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+# Nginx 官方镜像启动时仅替换 BACKEND_UPSTREAM，保留 $host/$uri 等 Nginx 变量。
+COPY docker/frontend/nginx.conf /etc/nginx/templates/default.conf.template
 
 # 暴露端口
 EXPOSE 80

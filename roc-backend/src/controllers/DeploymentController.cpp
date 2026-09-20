@@ -87,10 +87,11 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
                               const std::string &connStr) {
   const auto jwtSecret = config.auth.jwtSecret;
   const auto mapDirectory = config.storage.mapDirectory;
+  const auto taskLeaseSeconds = config.deployment.taskLeaseSeconds;
 
   app().registerHandler(
       "/api/projects/{projectId}/deployments",
-      [connStr, jwtSecret](const HttpRequestPtr &request,
+      [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &projectId) {
         const auto principal = accountPrincipal(request, jwtSecret);
@@ -129,7 +130,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         }
 
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           auto result = service.createBatch(
               projectId, (*principal)["user_id"].asString(),
               (*principal)["role"].asString(), resourceType, revisionId,
@@ -157,7 +159,7 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
 
   app().registerHandler(
       "/api/projects/{projectId}/deployments/{batchId}",
-      [connStr, jwtSecret](const HttpRequestPtr &request,
+      [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &projectId,
                            const std::string &batchId) {
@@ -171,7 +173,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
           return;
         }
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           sendResult(service.getBatch(
                          projectId, batchId,
                          (*principal)["user_id"].asString(),
@@ -187,7 +190,7 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
 
   app().registerHandler(
       "/api/projects/{projectId}/deployments/{batchId}/cancel",
-      [connStr, jwtSecret](const HttpRequestPtr &request,
+      [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &projectId,
                            const std::string &batchId) {
@@ -201,7 +204,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
           return;
         }
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           auto result = service.cancelBatch(
               projectId, batchId, (*principal)["user_id"].asString(),
               (*principal)["role"].asString());
@@ -221,12 +225,13 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
 
   app().registerHandler(
       "/api/device/tasks/{taskId}/accept",
-      [connStr, jwtSecret](const HttpRequestPtr &request,
+      [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &taskId) {
         if (!validUuid(taskId, callback, "task_id")) return;
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
@@ -250,12 +255,13 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
 
   app().registerHandler(
       "/api/device/tasks/{taskId}/manifest",
-      [connStr, jwtSecret](const HttpRequestPtr &request,
+      [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &taskId) {
         if (!validUuid(taskId, callback, "task_id")) return;
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
@@ -275,13 +281,14 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
 
   app().registerHandler(
       "/api/device/tasks/{taskId}/artifact",
-      [connStr, jwtSecret, mapDirectory](
+      [connStr, jwtSecret, mapDirectory, taskLeaseSeconds](
           const HttpRequestPtr &request,
           std::function<void(const HttpResponsePtr &)> &&callback,
           const std::string &taskId) {
         if (!validUuid(taskId, callback, "task_id")) return;
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
@@ -292,6 +299,12 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
               *device, taskId, request->getHeader("X-Task-Lease"));
           if (!result.ok()) {
             sendResult(result, callback);
+            return;
+          }
+          if (!request->getHeader("Range").empty()) {
+            callback(jsonResponse(
+                416, errorBody("range_not_supported",
+                               "Partial artifact downloads are not supported")));
             return;
           }
           if (result.body["resource_type"].asString() == "road_network") {
@@ -339,7 +352,7 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
 
   app().registerHandler(
       "/api/device/tasks/{taskId}/status",
-      [connStr, jwtSecret](const HttpRequestPtr &request,
+      [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &taskId) {
         if (!validUuid(taskId, callback, "task_id")) return;
@@ -359,7 +372,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         }
 
         try {
-          roc::service::DeploymentService service(connStr, jwtSecret);
+          roc::service::DeploymentService service(
+              connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(

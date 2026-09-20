@@ -84,6 +84,8 @@ coverage/
 *.gcov
 *.gcda
 *.gcno
+roc-frontend/test-results/
+roc-frontend/playwright-report/
 
 # 本地验证文档和测试机脚本（不提交）
 docs/

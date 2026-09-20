@@ -50,7 +50,7 @@ require_database_password() {
 build_image() {
     load_pg_cfg
     log_info "开始构建 PostgreSQL 镜像: ${IMAGE_NAME}:latest"
-    docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" "${CONTEXT_PATH}"
+    (cd "${REPO_ROOT}" && docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" "${CONTEXT_PATH}")
     if [ $? -eq 0 ]; then
         log_info "镜像构建成功: ${IMAGE_NAME}:latest"
     else
@@ -93,10 +93,16 @@ run_container() {
         -e "POSTGRES_USER=${DB_USER}" \
         -e "POSTGRES_PASSWORD=${DB_PASSWORD}" \
         -v "${VOLUME_NAME}:/var/lib/postgresql/data" \
+        --health-cmd "pg_isready -U ${DB_USER} -d ${DB_NAME}" \
+        --health-interval 5s \
+        --health-timeout 3s \
+        --health-retries 12 \
+        --health-start-period 5s \
         --restart unless-stopped \
         "${IMAGE_NAME}:latest"
     
     if [ $? -eq 0 ]; then
+        wait_for_container_healthy "${CONTAINER_NAME}" 60
         log_info "容器启动成功"
         log_info "PostgreSQL 访问地址: localhost:${HOST_PORT}"
         log_info "数据库名: ${DB_NAME}"

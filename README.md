@@ -91,7 +91,10 @@ ROC-SYSTEM/
 │       │   ├── AuthController.{h,cpp}      # register · login · me · change-password · logout
 │       │   ├── AdminController.{h,cpp}     # 用户 CRUD · 统计 · 角色权限
 │       │   ├── ProjectController.{h,cpp}   # 项目/地图 CRUD · 文件上传
+│       │   ├── MapArtifactController.{h,cpp} # 地图原图不可变制品 API
+│       │   ├── RoadNetworkController.{h,cpp} # 路网不可变版本 API
 │       │   ├── VehicleController.{h,cpp}   # 车辆注册 · 状态更新 · 删除
+│       │   ├── DeploymentController.{h,cpp} # 持久下发批次与设备任务 API
 │       │   ├── StatusWsController.{h,cpp}  # 浏览器项目订阅 · 广播
 │       │   └── DeviceWsController.{h,cpp}  # 设备鉴权 · 心跳 · 遥测
 │       ├── middleware/
@@ -105,11 +108,15 @@ ROC-SYSTEM/
 │       │   ├── common/types.h              # RobotStatus 领域类型
 │       │   └── DeviceProtocol.{h,cpp}       # JSON Device Protocol v1 编解码与校验
 │       ├── services/
+│       │   ├── DeploymentService.{h,cpp}    # 任务、租约、重试与事件流水
+│       │   ├── RoadNetworkService.{h,cpp}   # road-network v1 强校验与规范化
 │       │   └── VehicleStatusService.{h,cpp} # sequence 与车辆快照原子持久化
 │       └── utils/
 │           ├── JwtHelper.{h,cpp}           # JWT 签发与验证 (HMAC-SHA256)
 │           ├── PasswordHash.{h,cpp}        # 密码哈希 (SHA-256 + 随机盐)
 │           └── AuditLogger.h               # 审计日志工具
+│   ├── schemas/                            # OpenAPI 3.1 + JSON Schema 机器可读合同
+│   └── tests/                              # 协议、配置、图片、路网与 API 合同测试
 ├── roc-frontend/
 │   ├── index.html
 │   ├── package.json                        # React 18 · shadcn/ui · Recharts · Lucide
@@ -132,6 +139,7 @@ ROC-SYSTEM/
 │           ├── ProjectsPage.tsx            # 项目列表 CRUD
 │           ├── ProjectDetailPage.tsx       # 项目详情 · 地图列表
 │           ├── MapDetailPage.tsx           # 统一 SVG 地图 · 实时车辆 · 路网
+│           ├── RoadNetworkEditorPage.tsx   # 路网拓扑编辑 · 校验 · 版本历史
 │           ├── MapUploadModal.tsx          # 地图上传弹窗
 │           ├── VehiclePopup.tsx            # 车辆详情悬浮窗
 │           ├── PerformanceMonitor.tsx      # 性能监控面板
@@ -167,6 +175,7 @@ ROC-SYSTEM/
 │   ├── deploy-postgres-docker.sh           # PostgreSQL Docker 部署
 │   ├── deploy-postgres.sh                  # PostgreSQL 本地部署
 │   ├── deploy-gateway.sh                   # Nginx 网关部署
+│   ├── verify-deployment.sh                # HTTP/API/DB/WebSocket 部署验收
 │   ├── lib/common.sh                       # Shell 公共函数库
 │   ├── config/
 │   │   ├── deploy.env.example              # 部署环境变量模板
@@ -220,8 +229,8 @@ Vehicle C++17 client
 - 当前上行类型为 `heartbeat` 和 `telemetry`。建议 30 秒心跳，45 秒无有效消息关闭连接；全局硬上限 64 KiB，heartbeat 最大 4 KiB，telemetry 最大 16 KiB。
 - 最后设备 sequence 与遥测在同一数据库更新中提交；重复 sequence 返回幂等确认，不重复写入或广播。
 - ROC 二进制、`/api/protocol/status`、`/api/protocol/command`、`/api/protocol/roc` 和 `/api/protocol/pending/{robot_id}` 已删除。
-- T13 将在此常连接上增加 `task.available` 通知；耐久任务和大文件仍通过 HTTP(S) 接受和下载，不在 WebSocket 传输大文件。
-- 机器可读合同位于 `roc-backend/schemas/device-protocol-v1.schema.json`；T12 路网数据合同位于 `roc-backend/schemas/road-network-v1.schema.json`，当前尚无路网版本写入接口。
+- 服务端通过此常连接发送 `task.available` 通知；耐久任务和大文件仍通过 HTTP(S) 接受和下载，不在 WebSocket 传输大文件。
+- REST API 的 OpenAPI 3.1 合同位于 `roc-backend/schemas/openapi-v1.json`；设备通信、路网和下发任务的 JSON Schema 位于同目录的 `device-protocol-v1.schema.json`、`road-network-v1.schema.json` 与 `deployment-task-v1.schema.json`。路网保存接口只接受通过 v1 强校验的规范 JSON。
 ### 前端路由守卫
 
 ```
@@ -257,9 +266,55 @@ Vehicle opens /ws/device with a per-vehicle Device token
           → project-scoped /ws/status event after commit
             → frontend merges by version; REST polling remains browser fallback
 ```
+### 路网编辑与版本流
+
+```
+地图资源 → /projects/{pid}/maps/{mid}/edit
+  → 选择 / 平移 / 新增节点 / 连边 / 删除
+  → 前端结构校验 + 撤销/重做 + 未保存提示
+  → POST road-network/revisions
+    → 后端重新校验 schema、坐标模式、ID、引用、自环、重复边、限速与 10 MiB 上限
+    → 节点/边按 ID 规范化排序 → SHA-256
+    → road_network_revisions 追加不可变版本
+  → 历史版本可读取为新草稿；再次保存始终产生新版本
+```
+
+监控页保持只读并读取地图的最新兼容快照；编辑器不会后台自动保存。只有已持久化版本才能在后续路网下发流程中作为资源引用。
+
+### 路网版本下发流
+
+```
+已保存路网版本 → 编辑器“下发 vN”
+  → 仅列出绑定当前地图的车辆，并显示在线状态、Device token 资格和已送达版本
+  → 用户显式选择车辆 → 二次确认版本与目标数量
+  → POST /api/projects/{pid}/deployments
+    → 每辆车创建独立持久任务；离线车辆保持 queued（等待车辆上线）
+  → 对话框每 3 秒使用批次 GET 接口读取权威状态
+    → 展示已通知、已接单、下载中、交付处理中、已送达、失败、取消或过期
+  → 可取消尚未进入最终交付阶段的任务；失败/取消/过期车辆可按原版本创建新批次重试
+```
+
+创建成功只代表“任务已创建”。只有车端经 Device token + 租约下载、校验并明确回报 `delivered`，界面才显示“已送达”；该状态不表示车辆已加载或应用路网。当前批次 ID 写入编辑页查询参数，浏览器刷新后可恢复逐车状态。存在未保存草稿时，下发入口禁用，避免草稿与不可变版本混淆。
+
+### 地图制品上传与下发流
+
+```
+multipart/form-data 上传 PNG/JPEG 原图（name + image，最大 10 MiB）
+  → 后端校验真实文件签名与图片尺寸 → 临时文件原子移动
+  → 同一事务创建 maps 记录和 map_artifacts v1
+    → 记录 MIME、像素尺寸、字节数、SHA-256 与不可变存储键
+  → 地图卡片“下发地图” → 选择项目车辆并二次确认
+  → 复用持久部署批次、Device token、租约、manifest 和制品下载接口
+  → 车端按 SHA-256 校验原始图片并保存或交给受控本地适配器
+  → 仅在车端回报 delivered 后更新 delivered_map_artifact_id
+```
+
+旧地图可通过制品接口将当前受保护原图固化为 v1；同一 SHA-256 重复调用保持幂等。地图删除会同时清理未被引用的路网版本、制品元数据和文件；一旦版本进入部署历史或被车辆确认为已送达，删除返回 409，以免破坏审计链。平台不转码，也不声称车辆已加载或应用地图。
+
 ### 地图可视化 — 统一 SVG 坐标空间
 
 ```
+
 容器尺寸 → ResizeObserver → 矩形 viewport
 地图元数据 → worldToMap() → 图片像素坐标
 fitScale + zoom + pan → 单一 SVG <g transform>
@@ -360,10 +415,15 @@ graph TB
 | `/api/projects/{id}/maps` | GET | Bearer | 已授权项目的地图列表 |
 | `/api/projects/{pid}/maps/{mid}` | GET | Bearer | 读取单张地图及坐标元数据 |
 | `/api/projects/{pid}/maps/{mid}/image` | GET | Bearer | 校验项目归属后读取地图图片；不提供匿名 `/static` 回退 |
-| `/api/projects/{id}/maps/upload` | POST | Bearer | 上传地图图片（JSON base64，PNG/JPEG，最大 10 MB） |
+| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 上传（`name` + `image`）；PNG/JPEG，最大 10 MiB，并自动创建不可变 v1 制品 |
 | `/api/projects/{pid}/default-map` | PUT | Bearer | 原子设置项目默认地图 |
 | `/api/projects/{pid}/maps/{mid}` | PATCH | Bearer | 更新地图信息 |
-| `/api/projects/{pid}/maps/{mid}` | DELETE | Bearer | 删除地图 |
+| `/api/projects/{pid}/maps/{mid}` | DELETE | Bearer | 删除无车辆绑定且无交付历史的地图，并清理未引用制品文件 |
+| `/api/projects/{pid}/maps/{mid}/artifacts` | GET | Bearer | 列出不可变地图制品版本及当前版本 |
+| `/api/projects/{pid}/maps/{mid}/artifacts` | POST | Bearer | 将旧地图当前原图幂等固化为不可变制品版本 |
+| `/api/projects/{pid}/maps/{mid}/road-network/revisions` | GET | Bearer | 列出不可变路网版本及当前最新版本 |
+| `/api/projects/{pid}/maps/{mid}/road-network/revisions` | POST | Bearer | 校验并创建新的不可变 road-network v1 版本 |
+| `/api/projects/{pid}/maps/{mid}/road-network/revisions/{rid}` | GET | Bearer | 读取指定版本元数据和规范化路网正文 |
 
 ### 车辆 (Vehicles)
 
@@ -394,10 +454,10 @@ graph TB
 | `/api/projects/{project_id}/deployments/{batch_id}/cancel` | POST | Bearer | 取消排队、已通知、已接受或下载中的任务 |
 | `/api/device/tasks/{task_id}/accept` | POST | Device | 接受本车任务并取得 30 分钟租约；重复接受返回同一租约 |
 | `/api/device/tasks/{task_id}/manifest` | GET | Device + `X-Task-Lease` | 获取资源版本、类型、大小、SHA-256 和下载地址 |
-| `/api/device/tasks/{task_id}/artifact` | GET | Device + `X-Task-Lease` | 下载道路 JSON 或原始地图图片 |
+| `/api/device/tasks/{task_id}/artifact` | GET | Device + `X-Task-Lease` | 完整下载道路 JSON 或原始地图图片；不支持 Range，携带 Range 返回 416 |
 | `/api/device/tasks/{task_id}/status` | POST | Device + `X-Task-Lease` | 以唯一 `event_id` 幂等回报下载、交付、完成或失败状态 |
 
-任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
+任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。车端必须在完整下载后核对字节数、MIME 和 SHA-256；截断、类型或哈希不匹配时必须回报 `failed`，不得回报 `delivered`。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
 
 ### 浏览器实时通信 (WebSocket)
 
@@ -417,12 +477,12 @@ graph TB
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │
 │  │  postgres    │  │   backend    │  │ frontend  │  │
 │  │  :5432       │  │   :8080      │  │  :80      │  │
-│  │  health:     │  │   depends_on:│  │  args:    │  │
-│  │   pg_isready │  │   postgres   │  │  VITE_API │  │
-│  └──────────────┘  │   (healthy)  │  │  _BASE_URL│  │
-│                    │  health:     │  └───────────┘  │
-│                    │   curl /api/ │                  │
-│                    │   health     │                  │
+│  │  health:     │  │   depends_on:│  │ depends_on:│  │
+│  │   pg_isready │  │   postgres   │  │  backend   │  │
+│  └──────────────┘  │   (healthy)  │  │  (healthy) │  │
+│                    │  health:     │  │ health:    │  │
+│                    │   /api/db/   │  │  proxy     │  │
+│                    │   ping       │  │  /api/health│ │
 │                    └──────────────┘                  │
 └──────────────────────────────────────────────────────┘
           Port Mapping (host → container):
@@ -431,11 +491,15 @@ graph TB
           frontend:  ${FRONTEND_DOCKER_HOST_PORT:-3000} → 80
 ```
 
-**网络隔离**: 三服务通过 `roc-net` bridge 网络内部互通，仅映射配置中明确启用的主机端口。`backend` 依赖 `postgres` 的 health check；`postgres` 初始化脚本创建 schema，但不会创建带固定密码的默认管理员。
+**网络隔离**: 三服务通过 `roc-net` bridge 网络内部互通，仅映射配置中明确启用的主机端口。`backend` 等待 PostgreSQL 健康后启动，`frontend` 再等待后端 `/api/db/ping` 通过；`postgres` 初始化脚本创建 schema，但不会创建带固定密码的默认管理员。
 
 ### 分离部署
 
-支持独立部署场景：前端/后端/数据库可分布在不同服务器，通过 `deploy.env` 配置 `DB_HOST`、`VITE_API_BASE_URL` 等跨服务器地址。
+支持独立部署场景：前端/后端/数据库可分布在不同服务器。后端通过 `deploy.env` 读取 `DB_HOST` 等数据库连接参数；前端保持浏览器同源 `/api` 与 `/ws`，Nginx 在启动时用 `FRONTEND_BACKEND_UPSTREAM` 选择后端上游。后端容器将 `BACKEND_MAP_VOLUME` 持久挂载到 `/app/static`，避免重建容器丢失地图原图。部署脚本同时兼容 `docker compose` 与 `docker-compose`，并在返回前等待容器健康。
+
+后端到 PostgreSQL 使用原生 TCP/TLS，而不是 HTTPS。当前 Demo 可使用 `DB_SSLMODE=disable`；生产环境应优先使用数据库域名并配置 `DB_SSLMODE=verify-full` 与 `DB_SSLROOTCERT=/run/secrets/roc-db/root.crt`。如数据库要求双向 TLS，再同时配置 `DB_SSLCERT` 与 `DB_SSLKEY`。独立后端 Docker 部署把宿主机 `DB_SSL_CERT_DIR` 只读挂载到 `/run/secrets/roc-db`；Compose 部署则从 `docker/compose/certs/postgres/` 读取，真实证书不会提交到 Git。
+
+数据库定时备份、云快照和恢复编排由部署平台负责，不包含在本仓库的一键脚本中。交付时至少应把 PostgreSQL 数据卷和后端 `MAP_STORAGE_DIR`（原始地图制品）纳入同一恢复点，并定期在目标环境验证可恢复性。
 
 ## 快速开始
 
@@ -452,7 +516,10 @@ graph TB
 cp docker/compose/.env.example docker/compose/.env
 # 编辑 .env 修改密码等配置
 bash scripts/deploy-all-docker.sh --up
+bash scripts/verify-deployment.sh
 ```
+
+`verify-deployment.sh` 默认验证本机对外地址；分离网关或公网域名可通过 `VERIFY_BASE_URL=https://example.com` 指定。它会检查首页、后端健康、数据库连通与 WebSocket Upgrade。
 
 全新数据库不会创建固定密码的管理员。先通过应用注册运维账号，再由数据库管理员将该账号的 `role` 更新为 `super_admin`。不要在仓库或部署脚本中保存初始管理员密码。
 
@@ -473,6 +540,28 @@ cmake .. && make
 BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 JWT_SECRET=my-secret \
   MAP_STORAGE_DIR=./static/maps ./roc-backend-server
 ```
+
+## 验证与发布门禁
+
+当前基线包含 5 个 CTest 后端测试、27 个 Vitest 前端单元/组件测试和 2 个 Playwright 画布/键盘测试。发布前至少执行：
+
+```bash
+# 后端（Linux 构建主机）
+cmake -S roc-backend -B roc-backend/build
+cmake --build roc-backend/build --parallel
+ctest --test-dir roc-backend/build --output-on-failure
+
+# 前端
+cd roc-frontend
+corepack pnpm install --frozen-lockfile
+corepack pnpm run typecheck
+corepack pnpm run lint
+corepack pnpm test
+corepack pnpm run build
+corepack pnpm run test:e2e
+```
+
+API 合同测试会校验 OpenAPI 与三份 JSON Schema，并确认 44 个 REST 操作的路由、认证和唯一 `operationId`。目标主机还应运行全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的最终交付主机或 CI 上完成。
 
 ## 用户角色
 

@@ -35,6 +35,51 @@ load_backend_cfg() {
   DB_NAME_VAL="${DB_NAME:-roc_db}"
   DB_USER_VAL="${DB_USER:-roc_user}"
   DB_PASSWORD_VAL="${DB_PASSWORD:-}"
+  DB_SSLMODE_VAL="${DB_SSLMODE:-disable}"
+  DB_SSLROOTCERT_VAL="${DB_SSLROOTCERT:-}"
+  DB_SSLCERT_VAL="${DB_SSLCERT:-}"
+  DB_SSLKEY_VAL="${DB_SSLKEY:-}"
+  DB_SSL_CERT_DIR_VAL="${DB_SSL_CERT_DIR:-}"
+  MAP_STORAGE_VOLUME_VAL="${BACKEND_MAP_VOLUME:-roc_static}"
+}
+
+validate_db_tls_cfg() {
+  case "${DB_SSLMODE_VAL}" in
+    disable|require|verify-ca|verify-full) ;;
+    *)
+      log_error "DB_SSLMODE 无效：${DB_SSLMODE_VAL}（允许 disable/require/verify-ca/verify-full）"
+      exit 1
+      ;;
+  esac
+
+  if [[ "${DB_SSLMODE_VAL}" == "verify-ca" || "${DB_SSLMODE_VAL}" == "verify-full" ]]; then
+    if [[ -z "${DB_SSLROOTCERT_VAL}" ]]; then
+      log_error "${DB_SSLMODE_VAL} 模式必须配置 DB_SSLROOTCERT"
+      exit 1
+    fi
+  fi
+  if [[ -n "${DB_SSLCERT_VAL}" && -z "${DB_SSLKEY_VAL}" ]] || \
+     [[ -z "${DB_SSLCERT_VAL}" && -n "${DB_SSLKEY_VAL}" ]]; then
+    log_error "DB_SSLCERT 与 DB_SSLKEY 必须成对配置"
+    exit 1
+  fi
+
+  local configured_path
+  for configured_path in "${DB_SSLROOTCERT_VAL}" "${DB_SSLCERT_VAL}" "${DB_SSLKEY_VAL}"; do
+    [[ -z "${configured_path}" ]] && continue
+    if [[ -z "${DB_SSL_CERT_DIR_VAL}" || ! -d "${DB_SSL_CERT_DIR_VAL}" ]]; then
+      log_error "已配置数据库证书，但 DB_SSL_CERT_DIR 不是有效宿主机目录"
+      exit 1
+    fi
+    if [[ "${configured_path}" != /run/secrets/roc-db/* ]]; then
+      log_error "容器内数据库证书路径必须位于 /run/secrets/roc-db/"
+      exit 1
+    fi
+    if [[ ! -f "${DB_SSL_CERT_DIR_VAL}/$(basename "${configured_path}")" ]]; then
+      log_error "宿主机证书文件不存在：${DB_SSL_CERT_DIR_VAL}/$(basename "${configured_path}")"
+      exit 1
+    fi
+  done
 }
 
 build_image() {
@@ -46,7 +91,7 @@ build_image() {
   fi
 
   log_info "开始构建后端镜像: ${IMAGE_NAME}:latest"
-  docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" "${CONTEXT_PATH}"
+  (cd "${REPO_ROOT}" && docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" "${CONTEXT_PATH}")
   log_info "镜像构建完成: ${IMAGE_NAME}:latest"
 }
 
@@ -69,6 +114,7 @@ run_container() {
     log_error "DB_PASSWORD 未设置；请在 scripts/config/secrets.env 中配置强随机密码"
     exit 1
   fi
+  validate_db_tls_cfg
 
   # 后端监听（容器内）
   local listen_host="${BACKEND_LISTEN_HOST:-0.0.0.0}"
@@ -82,6 +128,11 @@ run_container() {
 
   stop_container
 
+  local -a tls_mount_args=()
+  if [[ -n "${DB_SSL_CERT_DIR_VAL}" ]]; then
+    tls_mount_args=(-v "${DB_SSL_CERT_DIR_VAL}:/run/secrets/roc-db:ro")
+  fi
+
   log_info "启动后端容器: ${CONTAINER_NAME}"
   docker run -d \
     --name "${CONTAINER_NAME}" \
@@ -93,14 +144,33 @@ run_container() {
     -e "DB_NAME=${DB_NAME_VAL}" \
     -e "DB_USER=${DB_USER_VAL}" \
     -e "DB_PASSWORD=${DB_PASSWORD_VAL}" \
+    -e "DB_SSLMODE=${DB_SSLMODE_VAL}" \
+    -e "DB_SSLROOTCERT=${DB_SSLROOTCERT_VAL}" \
+    -e "DB_SSLCERT=${DB_SSLCERT_VAL}" \
+    -e "DB_SSLKEY=${DB_SSLKEY_VAL}" \
     -e "JWT_SECRET=${JWT_SECRET:-roc-system-default-secret-change-in-production}" \
     -e "JWT_EXPIRE_SECONDS=${JWT_EXPIRE_SECONDS:-86400}" \
+    -e "WS_ALLOWED_ORIGINS=${WS_ALLOWED_ORIGINS:-}" \
+    -e "DEVICE_HEARTBEAT_SECONDS=${DEVICE_HEARTBEAT_SECONDS:-30}" \
+    -e "DEVICE_IDLE_TIMEOUT_SECONDS=${DEVICE_IDLE_TIMEOUT_SECONDS:-45}" \
+    -e "TASK_LEASE_SECONDS=${TASK_LEASE_SECONDS:-1800}" \
+    -e "MAP_STORAGE_DIR=${MAP_STORAGE_DIR:-/app/static/maps}" \
+    -v "${MAP_STORAGE_VOLUME_VAL}:/app/static" \
+    "${tls_mount_args[@]}" \
+    --health-cmd "curl -fsS http://127.0.0.1:${listen_port}/api/db/ping || exit 1" \
+    --health-interval 5s \
+    --health-timeout 3s \
+    --health-retries 12 \
+    --health-start-period 5s \
     --restart unless-stopped \
     "${IMAGE_NAME}:latest"
 
+  wait_for_container_healthy "${CONTAINER_NAME}" 60
   log_info "容器启动成功"
   log_info "后端端口映射: localhost:${HOST_PORT} -> container:${CONTAINER_PORT}"
   log_info "后端数据库连接目标: ${DB_HOST_VAL}:${DB_PORT_VAL}/${DB_NAME_VAL}"
+  log_info "PostgreSQL TLS 模式: ${DB_SSLMODE_VAL}"
+  log_info "地图制品持久卷: ${MAP_STORAGE_VOLUME_VAL} -> /app/static"
   log_info "查看容器日志: docker logs -f ${CONTAINER_NAME}"
 }
 

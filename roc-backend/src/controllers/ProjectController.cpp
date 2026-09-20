@@ -1,6 +1,7 @@
 #include "controllers/ProjectController.h"
 
 #include <drogon/drogon.h>
+#include <drogon/MultiPart.h>
 #include <json/json.h>
 #include <filesystem>
 #include <fstream>
@@ -9,10 +10,13 @@
 #include <ctime>
 #include <iomanip>
 #include <random>
+#include <vector>
 
 #include "db/PostgresClient.h"
+#include "utils/ImageMetadata.h"
 #include "utils/InputValidation.h"
 #include "utils/JwtHelper.h"
+#include "utils/PasswordHash.h"
 
 namespace roc::controller {
 
@@ -412,7 +416,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
       },
       {Get, Options});
 
-  // POST /api/projects/{id}/maps/upload — JSON base64 upload
+  // POST /api/projects/{id}/maps/upload — multipart image upload
   app().registerHandler(
       "/api/projects/{id}/maps/upload",
       [connStr, jwtSecret, mapStorageDirectory](const HttpRequestPtr &req,
@@ -421,28 +425,45 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         auto p = authReq(req, jwtSecret);
         if (!p) { cb(jsonResp(k401Unauthorized, makeResp(false, "Unauthorized"))); return; }
         if (respondForInvalidId(projId, cb, "project_id")) return;
-        auto body = req->getJsonObject();
-        if (!body) { cb(jsonResp(k400BadRequest, makeResp(false, "Invalid JSON"))); return; }
-        std::string b64 = (*body).get("image_base64", "").asString();
-        std::string mapName = (*body).get("name", "Untitled").asString();
-        if (b64.empty()) { cb(jsonResp(k400BadRequest, makeResp(false, "image_base64 required"))); return; }
-        if (b64.size() > 14 * 1024 * 1024) { cb(jsonResp(k400BadRequest, makeResp(false, "Image is too large"))); return; }
-        std::string raw = drogon::utils::base64Decode(b64);
-        const bool isPng = raw.size() >= 8 &&
-            static_cast<unsigned char>(raw[0]) == 0x89 && raw.substr(1, 3) == "PNG";
-        const bool isJpeg = raw.size() >= 3 &&
-            static_cast<unsigned char>(raw[0]) == 0xff &&
-            static_cast<unsigned char>(raw[1]) == 0xd8 &&
-            static_cast<unsigned char>(raw[2]) == 0xff;
-        if (!isPng && !isJpeg) {
+        MultiPartParser parser;
+        if (parser.parse(req) != 0) {
+          cb(jsonResp(k400BadRequest, makeResp(
+              false, "multipart/form-data with name and image fields is required")));
+          return;
+        }
+        const auto &parameters = parser.getParameters();
+        const auto name = parameters.find("name");
+        const auto files = parser.getFilesMap();
+        const auto file = files.find("image");
+        if (name == parameters.end() || name->second.empty()) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "name is required")));
+          return;
+        }
+        if (name->second.size() > 128) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "name is too long")));
+          return;
+        }
+        if (file == files.end() || file->second.fileLength() == 0) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "image is required")));
+          return;
+        }
+        if (file->second.fileLength() > 10 * 1024 * 1024) {
+          cb(jsonResp(k413RequestEntityTooLarge, makeResp(false, "Image is too large")));
+          return;
+        }
+        const std::string mapName = name->second;
+        const auto content = file->second.fileContent();
+        std::string raw(content.data(), content.size());
+        const auto image = roc::utils::inspectImage(raw);
+        if (!image) {
           cb(jsonResp(k400BadRequest, makeResp(false, "Only PNG and JPEG images are supported")));
           return;
         }
-        if (raw.size() > 10 * 1024 * 1024) { cb(jsonResp(k400BadRequest, makeResp(false, "Image is too large"))); return; }
-        const std::string extension = isPng ? ".png" : ".jpg";
-        std::string fn = "map_" + projId.substr(0, 8) + "_" + randomUploadSuffix() + extension;
+        std::string fn = "map_" + projId.substr(0, 8) + "_" + randomUploadSuffix() + image->extension;
         std::string savedPath = "/static/maps/" + fn;
         const auto d = mapStorageDirectory;
+        const auto diskPath = std::filesystem::path(d) / fn;
+        const auto temporaryPath = std::filesystem::path(d) / (fn + ".part-" + randomUploadSuffix());
         try {
           roc::db::PostgresClient pg(connStr);
           const auto access = checkProjectAccess(
@@ -452,23 +473,40 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           std::error_code ec;
           std::filesystem::create_directories(d, ec);
           if (ec) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to create upload directory"))); return; }
-          const auto diskPath = d + "/" + fn;
-          std::ofstream ofs(diskPath, std::ios::binary);
+          std::ofstream ofs(temporaryPath, std::ios::binary);
           if (!ofs) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file"))); return; }
           ofs.write(raw.data(), static_cast<std::streamsize>(raw.size()));
           ofs.close();
           if (!ofs) {
-            std::filesystem::remove(diskPath, ec);
+            std::filesystem::remove(temporaryPath, ec);
             cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file")));
+            return;
+          }
+          std::filesystem::rename(temporaryPath, diskPath, ec);
+          if (ec) {
+            std::filesystem::remove(temporaryPath, ec);
+            cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to finalize file")));
             return;
           }
 
           std::string mid;
           try {
-            mid = pg.insertReturningParams(
-                "INSERT INTO maps (project_id, name, image_url) "
-                "VALUES ($1::uuid, $2, $3) RETURNING id",
-                {projId, mapName, savedPath});
+            pqxx::connection connection(connStr);
+            pqxx::work tx(connection);
+            const auto inserted = tx.exec_params(
+                "INSERT INTO maps (project_id, name, image_url, image_width, image_height) "
+                "VALUES ($1::uuid, $2, $3, $4, $5) RETURNING id::text",
+                projId, mapName, savedPath, image->width, image->height);
+            mid = inserted[0][0].as<std::string>();
+            tx.exec_params(
+                "INSERT INTO map_artifacts "
+                "(map_id, version, storage_key, content_type, byte_size, sha256, "
+                "image_width, image_height, created_by) "
+                "VALUES ($1::uuid, 1, $2, $3, $4, $5, $6, $7, $8::uuid)",
+                mid, fn, image->contentType, static_cast<long long>(raw.size()),
+                roc::utils::sha256Hex(raw), image->width, image->height,
+                (*p)["user_id"].asString());
+            tx.commit();
           } catch (...) {
             std::filesystem::remove(diskPath, ec);
             throw;
@@ -612,24 +650,64 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           const auto access = checkProjectAccess(
               pg, projId, (*p)["user_id"].asString(), (*p)["role"].asString());
           if (respondForDeniedProject(access, cb)) return;
-          const auto map = pg.queryOneParams(
-              "SELECT id, image_url FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
-              {mapId, projId});
-          if (map.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Map not found"))); return; }
           const auto bound = pg.queryOneParams(
               "SELECT id FROM vehicles WHERE map_id = $1::uuid LIMIT 1", {mapId});
           if (!bound.isNull()) {
             cb(jsonResp(k409Conflict, makeResp(false, "Unbind vehicles before deleting this map")));
             return;
           }
-          pg.executeParams(
-              "DELETE FROM maps WHERE id = $1::uuid AND project_id = $2::uuid", {mapId, projId});
+          std::vector<std::string> storedFiles;
+          pqxx::connection connection(connStr);
+          pqxx::work tx(connection);
+          const auto map = tx.exec_params(
+              "SELECT image_url FROM maps "
+              "WHERE id = $1::uuid AND project_id = $2::uuid FOR UPDATE",
+              mapId, projId);
+          if (map.empty()) {
+            cb(jsonResp(k404NotFound, makeResp(false, "Map not found")));
+            return;
+          }
+          const auto referenced = tx.exec_params(
+              "SELECT 1 "
+              "FROM ("
+              "  SELECT id FROM map_artifacts WHERE map_id = $1::uuid "
+              "  UNION ALL "
+              "  SELECT id FROM road_network_revisions WHERE map_id = $1::uuid"
+              ") resource "
+              "WHERE EXISTS ("
+              "  SELECT 1 FROM deployment_batches batch "
+              "  WHERE batch.resource_revision_id = resource.id"
+              ") OR EXISTS ("
+              "  SELECT 1 FROM vehicles vehicle "
+              "  WHERE vehicle.delivered_map_artifact_id = resource.id "
+              "     OR vehicle.delivered_road_revision_id = resource.id"
+              ") LIMIT 1",
+              mapId);
+          if (!referenced.empty()) {
+            cb(jsonResp(k409Conflict, makeResp(
+                false, "This map has delivery history and cannot be deleted")));
+            return;
+          }
+          const auto artifacts = tx.exec_params(
+              "SELECT storage_key FROM map_artifacts WHERE map_id = $1::uuid", mapId);
+          for (const auto &artifact : artifacts) {
+            storedFiles.push_back(artifact[0].as<std::string>());
+          }
+          const auto imagePath = map[0][0].as<std::string>();
+          if (imagePath.rfind("/static/maps/", 0) == 0 &&
+              imagePath.find("..") == std::string::npos) {
+            storedFiles.push_back(std::filesystem::path(imagePath).filename().string());
+          }
+          tx.exec_params("DELETE FROM road_network_revisions WHERE map_id = $1::uuid", mapId);
+          tx.exec_params("DELETE FROM map_artifacts WHERE map_id = $1::uuid", mapId);
+          tx.exec_params(
+              "DELETE FROM maps WHERE id = $1::uuid AND project_id = $2::uuid", mapId, projId);
+          tx.commit();
 
-          const auto imagePath = map["image_url"].asString();
-          const std::string prefix = "/static/maps/";
-          if (imagePath.rfind(prefix, 0) == 0 && imagePath.find("..") == std::string::npos) {
+          for (const auto &storageKey : storedFiles) {
+            if (storageKey.empty() || storageKey.find("..") != std::string::npos) continue;
             const auto diskPath = std::filesystem::path(mapStorageDirectory) /
-                                  std::filesystem::path(imagePath).filename();
+                                  std::filesystem::path(storageKey).filename();
             std::error_code ec;
             std::filesystem::remove(diskPath, ec);
             if (ec) LOG_WARN << "Map file cleanup failed for " << diskPath << ": " << ec.message();
