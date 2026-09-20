@@ -14,6 +14,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from './ui/alert-dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import { MapUploadModal } from './MapUploadModal';
 import { MapArtifactDeployDialog } from './MapArtifactDeployDialog';
 
@@ -116,15 +119,29 @@ export function ProjectDetailPage() {
                   <Link to={`/projects/${projectId}/maps/${map.id}/monitor`} className="block truncate font-semibold text-slate-950 hover:text-blue-700 hover:underline">{map.name}</Link>
                   <p className="mt-1 text-xs text-slate-500">上传于 {new Date(map.createdAt).toLocaleDateString('zh-CN')}</p>
                 </div>
-                <details className="relative shrink-0">
-                  <summary aria-label={`打开 ${map.name} 操作菜单`} className="grid size-8 cursor-pointer list-none place-items-center rounded-md text-slate-500 hover:bg-slate-100"><MoreHorizontal className="size-4" /></summary>
-                  <div className="absolute right-0 z-20 mt-1 w-36 rounded-md border bg-white p-1 shadow-lg">
-                    <Link to={`/projects/${projectId}/maps/${map.id}/edit`} className="flex h-9 w-full items-center gap-2 rounded px-3 text-sm text-slate-700 hover:bg-slate-50"><Edit3 className="size-4" />编辑路网</Link>
-                    <button type="button" onClick={() => setMapToDeploy(map)} className="flex h-9 w-full items-center gap-2 rounded px-3 text-sm text-slate-700 hover:bg-slate-50"><Rocket className="size-4" />下发地图</button>
-                    {!map.isDefault && <button type="button" disabled={Boolean(settingDefaultId)} onClick={() => void setDefaultMap(map)} className="flex h-9 w-full items-center gap-2 rounded px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"><Star className="size-4" />{settingDefaultId === map.id ? '设置中…' : '设为默认'}</button>}
-                    <button type="button" onClick={() => setMapToDelete(map)} className="flex h-9 w-full items-center gap-2 rounded px-3 text-sm text-red-700 hover:bg-red-50"><Trash2 className="size-4" />删除地图</button>
-                  </div>
-                </details>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={`打开 ${map.name} 操作菜单`}
+                      className="grid size-8 shrink-0 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                    >
+                      <MoreHorizontal className="size-4" aria-hidden="true" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-36">
+                    <DropdownMenuItem asChild>
+                      <Link to={`/projects/${projectId}/maps/${map.id}/edit`}><Edit3 />编辑路网</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setMapToDeploy(map)}><Rocket />下发地图</DropdownMenuItem>
+                    {!map.isDefault && (
+                      <DropdownMenuItem disabled={Boolean(settingDefaultId)} onSelect={() => void setDefaultMap(map)}>
+                        <Star />{settingDefaultId === map.id ? '设置中…' : '设为默认'}
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem variant="destructive" onSelect={() => setMapToDelete(map)}><Trash2 />删除地图</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </article>
           ))}
