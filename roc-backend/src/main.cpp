@@ -96,8 +96,8 @@ int main() {
   // Uploaded map bytes remain outside the document root and are served only
   // through authenticated project routes.
   app().setDocumentRoot("./public");
-  // 10 MiB image payload plus bounded multipart headers.
-  app().setClientMaxBodySize(11 * 1024 * 1024);
+  // 30 MiB image payload plus bounded multipart headers.
+  app().setClientMaxBodySize(32 * 1024 * 1024);
   app().addListener(config.http.listenHost,
                     static_cast<std::uint16_t>(config.http.listenPort));
   app().run();

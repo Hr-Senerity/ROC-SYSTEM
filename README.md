@@ -295,7 +295,7 @@ Vehicle opens /ws/device with a per-vehicle Device token
 ### 地图制品上传与下发流
 
 ```
-multipart/form-data 上传 PNG/JPEG 原图（name + image，最大 10 MiB）
+multipart/form-data 上传 PNG/JPEG 原图（name + image，最大 30 MiB；中文显示名/原始文件名使用安全英文传输名）
   → 后端校验真实文件签名与图片尺寸 → 临时文件原子移动
   → 同一事务创建 maps 记录和 map_artifacts v1
     → 记录 MIME、像素尺寸、字节数、SHA-256 与不可变存储键
@@ -397,7 +397,7 @@ graph TB
 | `/api/admin/users/{id}` | DELETE | super_admin | 删除用户 |
 | `/api/admin/users/{id}/status` | PATCH | super_admin | 启用/停用用户 |
 | `/api/admin/users/{id}/vehicles` | GET | super_admin | 用户的车辆列表 |
-| `/api/admin/invitation-codes` | GET | super_admin | 查看最近邀请码及使用/撤销状态 |
+| `/api/admin/invitation-codes` | GET | super_admin | 按 `page`、`limit`、`status` 分页查看邀请码、总数及使用/撤销状态 |
 | `/api/admin/invitation-codes` | POST | super_admin | 随机生成 5 位数字与大写字母一次性邀请码 |
 | `/api/admin/invitation-codes/{id}` | DELETE | super_admin | 撤销尚未使用的邀请码 |
 | `/api/admin/stats` | GET | super_admin | 系统统计数据 |
@@ -414,7 +414,7 @@ graph TB
 | `/api/projects/{id}/maps` | GET | Bearer | 已授权项目的地图列表 |
 | `/api/projects/{pid}/maps/{mid}` | GET | Bearer | 读取单张地图及坐标元数据 |
 | `/api/projects/{pid}/maps/{mid}/image` | GET | Bearer | 校验项目归属后读取地图图片；不提供匿名 `/static` 回退 |
-| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 上传（`name` + `image`）；PNG/JPEG，最大 10 MiB，并自动创建不可变 v1 制品 |
+| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 上传（`name` + `image`）；PNG/JPEG，最大 30 MiB，显示名支持中文，并自动创建不可变 v1 制品 |
 | `/api/projects/{pid}/default-map` | PUT | Bearer | 原子设置项目默认地图 |
 | `/api/projects/{pid}/maps/{mid}` | PATCH | Bearer | 更新地图信息 |
 | `/api/projects/{pid}/maps/{mid}` | DELETE | Bearer | 删除无车辆绑定且无交付历史的地图，并清理未引用制品文件 |
@@ -541,6 +541,8 @@ bash scripts/verify-deployment.sh
 
 数据库迁移 `009_registration_invites.sql` 完成后，已有 `super_admin` 可在“平台账户 → 注册邀请码”生成一次性邀请码。全新空数据库仍不会创建固定管理员、口令或固定邀请码；数据库运维人员应临时插入一个自选的 5 位大写字母数字 bootstrap 邀请码（必须同时包含数字和字母），完成首个账户注册后把该账户提升为 `super_admin`。后续邀请码全部由后台生成，不要在仓库或部署脚本中保存 bootstrap 邀请码或初始管理员密码。
 
+`v0.2.1-rc1` 已于 2026-09-24 完成主服务器人工验收：有效邀请码首次注册成功，同一邀请码重复使用被拒绝，已撤销邀请码被拒绝，验收临时账户随后已清理。该结果验证串行业务行为；两个并发注册请求争用同一码时最多一个成功，仍必须由数据库/API 集成测试单独覆盖。
+
 ```sql
 -- 仅限全新空数据库首次引导；把占位符替换为临时随机码，不要提交该值。
 INSERT INTO registration_invites (code) VALUES ('<5位数字字母码>');
@@ -605,7 +607,7 @@ BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 JWT_SECRET=my-secret \
 
 ## 验证与发布门禁
 
-当前代码基线包含 6 个 CTest 后端测试、29 个 Vitest 前端单元/组件测试和 2 个 Playwright 画布/键盘测试。发布前至少执行：
+当前代码基线包含 6 个 CTest 后端测试、45 个 Vitest 前端单元/组件测试和 2 个 Playwright 画布/键盘测试。组件测试覆盖登录提交与错误映射、注册表单校验、邀请码规范化/失败状态、邀请码服务端分页交互、地图中文文件名/30 MiB 边界，以及通用错误态重试。发布前至少执行：
 
 ```bash
 # 后端（Linux 构建主机）
@@ -623,7 +625,7 @@ corepack pnpm run build
 corepack pnpm run test:e2e
 ```
 
-API 合同测试会校验 OpenAPI 与三份 JSON Schema，并确认 47 个 REST 操作的路由、认证和唯一 `operationId`。目标主机还应运行邀请码并发单次消费、全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的独立构建机或 CI 上完成。
+API 合同测试会校验 OpenAPI 与三份 JSON Schema，并确认 47 个 REST 操作的路由、认证和唯一 `operationId`。邀请码的有效注册、重复使用拒绝和撤销后拒绝已完成人工验收，登录、注册、邀请码和错误态组件测试也已通过；两个并发注册请求争用同一码时最多一个成功，仍需数据库/API 自动化。目标主机还应运行全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的独立构建机或 CI 上完成。
 
 ## 用户角色
 

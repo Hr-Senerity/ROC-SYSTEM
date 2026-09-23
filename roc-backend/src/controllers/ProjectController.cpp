@@ -25,6 +25,8 @@ using namespace drogon;
 
 namespace {
 
+constexpr std::size_t kMaxMapImageBytes = 30 * 1024 * 1024;
+
 Json::Value makeResp(bool ok, const std::string &msg = "") {
   Json::Value v;
   v["ok"] = ok;
@@ -534,8 +536,9 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           cb(jsonResp(k400BadRequest, makeResp(false, "image is required")));
           return;
         }
-        if (file->second.fileLength() > 10 * 1024 * 1024) {
-          cb(jsonResp(k413RequestEntityTooLarge, makeResp(false, "Image is too large")));
+        if (file->second.fileLength() > kMaxMapImageBytes) {
+          cb(jsonResp(k413RequestEntityTooLarge,
+                      makeResp(false, "Image exceeds the 30 MiB upload limit")));
           return;
         }
         const std::string mapName = name->second;

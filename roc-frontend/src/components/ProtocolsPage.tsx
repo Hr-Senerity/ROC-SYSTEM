@@ -30,7 +30,7 @@ const accountTaskEndpoints = [
 
 const invitationEndpoints = [
   { method: 'POST', path: '/api/auth/register', purpose: '提交 username、email、password 与一次性 invitation_code；成功后邀请码立即失效' },
-  { method: 'GET', path: '/api/admin/invitation-codes', purpose: '超级管理员查看最近邀请码及可用、已使用、已撤销状态' },
+  { method: 'GET', path: '/api/admin/invitation-codes', purpose: '超级管理员按 page、limit 与 status 分页查看邀请码及总数' },
   { method: 'POST', path: '/api/admin/invitation-codes', purpose: '超级管理员随机生成 5 位数字与大写字母邀请码' },
   { method: 'DELETE', path: '/api/admin/invitation-codes/{id}', purpose: '超级管理员撤销尚未使用的邀请码' },
 ] as const;

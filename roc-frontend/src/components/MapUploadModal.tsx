@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { ImagePlus, Upload } from 'lucide-react';
 import { apiRequest } from '../shared/api/client';
+import {
+  formatMiB,
+  mapNameFromFileName,
+  mapUploadTransportName,
+  validateMapImageFile,
+} from '../features/maps/upload';
 import { Alert, AlertDescription } from './ui/alert';
 import { Button } from './ui/button';
 import {
@@ -14,9 +20,6 @@ interface MapUploadModalProps {
   onClose: () => void;
   onUploaded: () => void;
 }
-
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg']);
 
 export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUploadModalProps) {
   const [name, setName] = useState('');
@@ -35,18 +38,15 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
     setError('');
     setFile(null);
     setPreview('');
-    if (!ALLOWED_IMAGE_TYPES.has(selectedFile.type)) {
-      setError('仅支持 PNG 或 JPEG 图片');
-      return;
-    }
-    if (selectedFile.size > MAX_IMAGE_BYTES) {
-      setError('图片不能超过 10 MB');
+    const validationError = validateMapImageFile(selectedFile);
+    if (validationError) {
+      setError(validationError);
       return;
     }
     try {
       setFile(selectedFile);
       setPreview(URL.createObjectURL(selectedFile));
-      if (!name.trim()) setName(selectedFile.name.replace(/\.[^.]+$/, ''));
+      if (!name.trim()) setName(mapNameFromFileName(selectedFile.name));
     } catch (readError) {
       setError(readError instanceof Error ? readError.message : '读取文件失败');
     }
@@ -64,7 +64,7 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
     try {
       const body = new FormData();
       body.append('name', normalizedName);
-      body.append('image', file, file.name);
+      body.append('image', file, mapUploadTransportName(file));
       await apiRequest(`/api/projects/${projectId}/maps/upload`, {
         method: 'POST',
         token,
@@ -84,7 +84,7 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>上传地图</DialogTitle>
-          <DialogDescription>上传 PNG 或 JPEG 底图，单个文件最大 10 MB。</DialogDescription>
+          <DialogDescription>上传 PNG 或 JPEG 底图，单个文件最大 30 MiB；地图名称和原始文件名均支持中文。</DialogDescription>
         </DialogHeader>
 
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
@@ -115,7 +115,7 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
                 <span className="flex flex-col items-center text-slate-600">
                   <ImagePlus className="mb-3 size-10 text-slate-400" aria-hidden="true" />
                   <span className="font-medium">选择地图图片</span>
-                  <span className="mt-1 text-xs text-slate-500">PNG / JPEG · 最大 10 MB</span>
+                  <span className="mt-1 text-xs text-slate-500">PNG / JPEG · 最大 30 MiB · 支持中文文件名</span>
                 </span>
               )}
             </button>
@@ -127,7 +127,7 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
               className="sr-only"
               aria-label="选择地图图片文件"
             />
-            {file && <p className="text-xs text-slate-500">已选择：{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB</p>}
+            {file && <p className="text-xs text-slate-500">已选择：{file.name} · {formatMiB(file.size)} MiB</p>}
           </div>
         </div>
 

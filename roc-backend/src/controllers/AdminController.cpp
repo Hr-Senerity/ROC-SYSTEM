@@ -2,6 +2,7 @@
 
 #include <drogon/drogon.h>
 #include <json/json.h>
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 
@@ -306,7 +307,7 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
       },
       {Get, Options});
 
-  // GET /api/admin/invitation-codes — recent one-time registration codes
+  // GET /api/admin/invitation-codes — paginated one-time registration codes
   app().registerHandler(
       "/api/admin/invitation-codes",
       [connStr, jwtSecret](const HttpRequestPtr &req,
@@ -318,8 +319,52 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
         }
 
         try {
+          const auto parseBoundedPositive = [&req](const char *name,
+                                                   int defaultValue,
+                                                   int maximum) -> std::optional<int> {
+            const auto raw = req->getParameter(name);
+            if (raw.empty()) return defaultValue;
+            try {
+              std::size_t consumed = 0;
+              const auto parsed = std::stoll(raw, &consumed);
+              if (consumed != raw.size() || parsed < 1 || parsed > maximum) {
+                return std::nullopt;
+              }
+              return static_cast<int>(parsed);
+            } catch (...) {
+              return std::nullopt;
+            }
+          };
+
+          const auto page = parseBoundedPositive("page", 1, 1000000);
+          const auto limit = parseBoundedPositive("limit", 10, 100);
+          if (!page || !limit) {
+            cb(jsonResp(k400BadRequest,
+                        makeResp(false, "page and limit must be positive integers")));
+            return;
+          }
+
+          const auto status = req->getParameter("status");
+          std::string whereClause;
+          if (status.empty()) {
+            whereClause = "";
+          } else if (status == "available") {
+            whereClause = " WHERE i.used_at IS NULL AND i.revoked_at IS NULL";
+          } else if (status == "used") {
+            whereClause = " WHERE i.used_at IS NOT NULL";
+          } else if (status == "revoked") {
+            whereClause = " WHERE i.used_at IS NULL AND i.revoked_at IS NOT NULL";
+          } else {
+            cb(jsonResp(k400BadRequest,
+                        makeResp(false, "status must be available, used, or revoked")));
+            return;
+          }
+
+          const auto offset = (*page - 1) * *limit;
           roc::db::PostgresClient pg(connStr);
-          auto invitations = pg.query(
+          const auto count = pg.queryOne(
+              "SELECT COUNT(*) AS count FROM registration_invites i" + whereClause);
+          const auto invitations = pg.queryParams(
               "SELECT i.id, i.code, i.created_at, i.used_at, i.revoked_at, "
               "creator.username AS created_by_username, "
               "consumer.username AS used_by_username, "
@@ -328,11 +373,16 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
               "FROM registration_invites i "
               "LEFT JOIN users creator ON creator.id = i.created_by "
               "LEFT JOIN users consumer ON consumer.id = i.used_by "
-              "ORDER BY i.created_at DESC LIMIT 100");
+              + whereClause +
+              " ORDER BY i.created_at DESC, i.id DESC LIMIT $1::int OFFSET $2::int",
+              {std::to_string(*limit), std::to_string(offset)});
 
           Json::Value response;
           response["ok"] = true;
           response["invitation_codes"] = invitations;
+          response["total"] = count.isNull() ? 0 : count["count"].asInt64();
+          response["page"] = *page;
+          response["limit"] = *limit;
           cb(jsonResp(k200OK, response));
         } catch (const std::exception &error) {
           LOG_ERROR << "Admin list invitation codes error: " << error.what();

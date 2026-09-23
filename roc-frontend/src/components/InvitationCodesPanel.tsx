@@ -21,15 +21,23 @@ interface InvitationCode {
 
 interface InvitationListResponse {
   invitation_codes?: InvitationCode[];
+  total?: number;
+  page?: number;
+  limit?: number;
 }
 
 interface InvitationCreateResponse {
   invitation_code?: InvitationCode;
 }
 
+const PAGE_SIZE = 10;
+
 export function InvitationCodesPanel() {
   const { token } = useAuth();
   const [invitations, setInvitations] = useState<InvitationCode[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState('');
@@ -40,14 +48,17 @@ export function InvitationCodesPanel() {
     setLoading(true);
     setError('');
     try {
-      const response = await apiRequest<InvitationListResponse>('/api/admin/invitation-codes', { token });
+      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+      if (statusFilter) params.set('status', statusFilter);
+      const response = await apiRequest<InvitationListResponse>(`/api/admin/invitation-codes?${params}`, { token });
       setInvitations(response.invitation_codes || []);
+      setTotal(response.total || 0);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '无法加载邀请码');
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [page, statusFilter, token]);
 
   useEffect(() => { void loadInvitations(); }, [loadInvitations]);
 
@@ -62,8 +73,9 @@ export function InvitationCodesPanel() {
       });
       const createdInvitation = response.invitation_code;
       if (!createdInvitation) throw new Error('服务器未返回邀请码');
-      setInvitations((current) => [createdInvitation, ...current]);
       setNotice(`已生成邀请码 ${createdInvitation.code}，每个邀请码只能注册一个账户。`);
+      if (page !== 1) setPage(1);
+      else await loadInvitations();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '生成邀请码失败');
     } finally {
@@ -103,13 +115,9 @@ export function InvitationCodesPanel() {
       await apiRequest(`/api/admin/invitation-codes/${pendingRevoke.id}`, {
         method: 'DELETE', token,
       });
-      setInvitations((current) => current.map((invitation) => (
-        invitation.id === pendingRevoke.id
-          ? { ...invitation, status: 'revoked', revoked_at: new Date().toISOString() }
-          : invitation
-      )));
       setNotice(`邀请码 ${pendingRevoke.code} 已撤销`);
       setPendingRevoke(null);
+      await loadInvitations();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '撤销邀请码失败');
       setPendingRevoke(null);
@@ -118,6 +126,12 @@ export function InvitationCodesPanel() {
     }
   };
 
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  useEffect(() => {
+    if (!loading && page > totalPages) setPage(totalPages);
+  }, [loading, page, totalPages]);
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-4 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -125,7 +139,18 @@ export function InvitationCodesPanel() {
           <div className="flex items-center gap-2"><KeyRound className="size-5 text-indigo-600" /><h2 className="font-semibold text-slate-950">注册邀请码</h2></div>
           <p className="mt-1 text-sm text-slate-500">生成 5 位数字与大写字母组合。邀请码使用一次后自动失效。</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={statusFilter}
+            onChange={(event) => { setPage(1); setStatusFilter(event.target.value); }}
+            className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm"
+            aria-label="筛选邀请码状态"
+          >
+            <option value="">全部状态</option>
+            <option value="available">可使用</option>
+            <option value="used">已使用</option>
+            <option value="revoked">已撤销</option>
+          </select>
           <Button variant="outline" size="sm" disabled={loading || mutating} onClick={() => void loadInvitations()}><RefreshCw />刷新</Button>
           <Button size="sm" disabled={mutating} onClick={() => void generateInvitation()}><Plus />随机生成</Button>
         </div>
@@ -155,6 +180,15 @@ export function InvitationCodesPanel() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 text-sm text-slate-500">
+        <span>共 {total} 个邀请码</span>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((value) => value - 1)}>上一页</Button>
+          <span>{page} / {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>下一页</Button>
+        </div>
       </div>
 
       <AlertDialog open={Boolean(pendingRevoke)} onOpenChange={(open) => { if (!open && !mutating) setPendingRevoke(null); }}>

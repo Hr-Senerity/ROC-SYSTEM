@@ -464,8 +464,13 @@
       "get": {
         "operationId": "listRegistrationInvitationCodes",
         "tags": ["Administration"],
-        "summary": "List recent one-time registration invitation codes",
-        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" } }
+        "summary": "List one-time registration invitation codes with pagination",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 10 } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["available", "used", "revoked"] } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" } }
       },
       "post": {
         "operationId": "createRegistrationInvitationCode",
