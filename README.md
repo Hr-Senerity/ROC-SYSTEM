@@ -557,25 +557,25 @@ UPDATE users SET role = 'super_admin' WHERE username = '<operator>';
 在 Linux x86_64 构建机的已审批 commit/tag 检出上执行；完整版本必须与前端 `package.json` 一致，去掉预发布后缀的基础版本必须与后端 CMake 项目版本一致：
 
 ```bash
-bash scripts/build-release-bundle.sh v0.2.1-rc1
+bash scripts/build-release-bundle.sh v0.2.1
 # 中国大陆构建机可按需使用：
-# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1-rc1
+# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1
 ```
 
 构建脚本会在 Docker builder 中运行后端 CTest、前端 typecheck/生产构建、lint/Vitest 和 Playwright 画布/键盘门禁，然后生成：
 
 ```text
-release-output/roc-system-v0.2.1-rc1-amd64.bundle.tar
-release-output/roc-system-v0.2.1-rc1-amd64.bundle.tar.sha256
+release-output/roc-system-v0.2.1-amd64.bundle.tar
+release-output/roc-system-v0.2.1-amd64.bundle.tar.sha256
 ```
 
 交付包同时包含版本化的 `migrations/` SQL，便于运行主机在切换应用容器前对现有数据库执行待应用迁移。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
 
 ```bash
-sha256sum -c roc-system-v0.2.1-rc1-amd64.bundle.tar.sha256
-mkdir -p roc-system-v0.2.1-rc1
-tar -xf roc-system-v0.2.1-rc1-amd64.bundle.tar -C roc-system-v0.2.1-rc1
-cd roc-system-v0.2.1-rc1
+sha256sum -c roc-system-v0.2.1-amd64.bundle.tar.sha256
+mkdir -p roc-system-v0.2.1
+tar -xf roc-system-v0.2.1-amd64.bundle.tar -C roc-system-v0.2.1
+cd roc-system-v0.2.1
 bash deploy.sh --prepare
 # 编辑 release.env，填写 DB_PASSWORD、JWT_SECRET、Origin 和端口
 bash deploy.sh --install
