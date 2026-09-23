@@ -10,6 +10,7 @@
 #include <ctime>
 #include <iomanip>
 #include <random>
+#include <set>
 #include <vector>
 
 #include "db/PostgresClient.h"
@@ -275,7 +276,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
   // DELETE /api/projects/{id}
   app().registerHandler(
       "/api/projects/{id}",
-      [connStr, jwtSecret](const HttpRequestPtr &req,
+      [connStr, jwtSecret, mapStorageDirectory](const HttpRequestPtr &req,
                             std::function<void(const HttpResponsePtr &)> &&cb,
                             const std::string &projId) {
         auto p = authReq(req, jwtSecret);
@@ -286,16 +287,102 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         std::string role = (*p)["role"].asString();
 
         try {
-          roc::db::PostgresClient pg(connStr);
-          auto proj = pg.queryOneParams(
-              "SELECT user_id FROM projects WHERE id = $1::uuid", {projId});
-          if (proj.isNull()) { cb(jsonResp(k404NotFound, makeResp(false, "Not found"))); return; }
-          if (role != "super_admin" && proj["user_id"].asString() != userId) {
-            cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden"))); return;
+          std::set<std::string> storedFiles;
+          pqxx::connection connection(connStr);
+          pqxx::work tx(connection);
+          const auto project = tx.exec_params(
+              "SELECT user_id FROM projects WHERE id = $1::uuid FOR UPDATE", projId);
+          if (project.empty()) {
+            cb(jsonResp(k404NotFound, makeResp(false, "Not found")));
+            return;
+          }
+          if (role != "super_admin" && project[0][0].as<std::string>() != userId) {
+            cb(jsonResp(k403Forbidden, makeResp(false, "Forbidden")));
+            return;
           }
 
-          pg.executeParams("DELETE FROM projects WHERE id = $1::uuid", {projId});
+          const auto referenced = tx.exec_params(
+              "SELECT 1 FROM deployment_batches "
+              "WHERE project_id = $1::uuid "
+              "UNION ALL "
+              "SELECT 1 "
+              "FROM ("
+              "  SELECT artifact.id FROM map_artifacts artifact "
+              "  JOIN maps map ON map.id = artifact.map_id "
+              "  WHERE map.project_id = $1::uuid "
+              "  UNION ALL "
+              "  SELECT revision.id FROM road_network_revisions revision "
+              "  JOIN maps map ON map.id = revision.map_id "
+              "  WHERE map.project_id = $1::uuid"
+              ") resource "
+              "WHERE EXISTS ("
+              "  SELECT 1 FROM deployment_batches batch "
+              "  WHERE batch.resource_revision_id = resource.id"
+              ") OR EXISTS ("
+              "  SELECT 1 FROM vehicles vehicle "
+              "  WHERE vehicle.delivered_map_artifact_id = resource.id "
+              "     OR vehicle.delivered_road_revision_id = resource.id"
+              ") LIMIT 1",
+              projId);
+          if (!referenced.empty()) {
+            cb(jsonResp(k409Conflict, makeResp(
+                false, "This project has delivery history and cannot be deleted")));
+            return;
+          }
+
+          const auto rememberFile = [&storedFiles](const pqxx::field &field) {
+            if (field.is_null()) return;
+            const auto storedPath = field.as<std::string>();
+            if (storedPath.empty() || storedPath.find("..") != std::string::npos) return;
+            const auto fileName = std::filesystem::path(storedPath).filename().string();
+            if (!fileName.empty() && fileName != "." && fileName != "..") {
+              storedFiles.insert(fileName);
+            }
+          };
+          const auto mapFiles = tx.exec_params(
+              "SELECT image_url FROM maps WHERE project_id = $1::uuid", projId);
+          for (const auto &map : mapFiles) rememberFile(map[0]);
+          const auto artifactFiles = tx.exec_params(
+              "SELECT artifact.storage_key FROM map_artifacts artifact "
+              "JOIN maps map ON map.id = artifact.map_id "
+              "WHERE map.project_id = $1::uuid",
+              projId);
+          for (const auto &artifact : artifactFiles) rememberFile(artifact[0]);
+
+          tx.exec_params(
+              "UPDATE vehicles SET map_id = NULL "
+              "WHERE map_id IN (SELECT id FROM maps WHERE project_id = $1::uuid)",
+              projId);
+          tx.exec_params(
+              "DELETE FROM road_network_revisions revision USING maps map "
+              "WHERE revision.map_id = map.id AND map.project_id = $1::uuid",
+              projId);
+          tx.exec_params(
+              "DELETE FROM map_artifacts artifact USING maps map "
+              "WHERE artifact.map_id = map.id AND map.project_id = $1::uuid",
+              projId);
+          tx.exec_params("DELETE FROM maps WHERE project_id = $1::uuid", projId);
+          tx.exec_params("DELETE FROM projects WHERE id = $1::uuid", projId);
+          tx.commit();
+
+          for (const auto &fileName : storedFiles) {
+            const auto diskPath = std::filesystem::path(mapStorageDirectory) / fileName;
+            std::error_code ec;
+            std::filesystem::remove(diskPath, ec);
+            if (ec) {
+              LOG_WARN << "Project map file cleanup failed for " << diskPath << ": "
+                       << ec.message();
+            }
+          }
           cb(jsonResp(k200OK, makeResp(true, "Deleted")));
+        } catch (const pqxx::sql_error &e) {
+          LOG_ERROR << "Delete project SQL error (" << e.sqlstate() << "): " << e.what();
+          if (std::string(e.sqlstate()) == "23503") {
+            cb(jsonResp(k409Conflict, makeResp(
+                false, "This project has protected delivery references and cannot be deleted")));
+          } else {
+            cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+          }
         } catch (const std::exception &e) {
           LOG_ERROR << "Delete project: " << e.what();
           cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));

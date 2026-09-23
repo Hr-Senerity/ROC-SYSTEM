@@ -154,8 +154,9 @@
       "delete": {
         "operationId": "deleteProject",
         "tags": ["Projects"],
-        "summary": "Delete a project",
-        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+        "summary": "Delete a project without durable delivery references",
+        "description": "Unbinds project vehicles and transactionally removes maps and unreferenced resource versions. Returns 409 when a deployment batch or vehicle delivery pointer references project resources.",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/projects/{id}/maps": {

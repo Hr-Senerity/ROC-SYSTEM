@@ -73,23 +73,29 @@ graph TB
 ROC-SYSTEM/
 ├── docker/
 │   ├── backend/Dockerfile          # 多阶段 C++ 编译 (CMake + make)
-│   ├── frontend/Dockerfile          # 多阶段 Node + Nginx
-│   ├── frontend/nginx.conf          # SPA fallback + API proxy
-│   ├── postgres/Dockerfile          # 时区 + 中文 locale
+│   ├── frontend/
+│   │   ├── Dockerfile               # 多阶段 Node + Nginx 构建
+│   │   └── nginx.conf               # SPA fallback + API/WS 代理
+│   ├── postgres/Dockerfile          # PostgreSQL 运行镜像
 │   └── compose/
-│       ├── docker-compose.yml       # postgres + backend + frontend
-│       └── .env.example             # 环境变量模板
-├── postgres/init/
-│   └── init.sql                     # Schema: users · projects · maps · vehicles
+│       ├── docker-compose.yml       # 开发/常规三服务编排
+│       ├── docker-compose.release.yml # 运行机只加载已构建镜像
+│       ├── .env.example             # 常规编排环境变量模板
+│       └── release.env.example      # release 运行配置模板
+├── postgres/
+│   ├── init/init.sql                # 全新数据库完整 Schema
+│   └── migrations/                  # 001–009 增量迁移
 ├── roc-backend/
 │   ├── CMakeLists.txt               # C++17 · Drogon · libpqxx · OpenSSL · jsoncpp
+│   ├── schemas/                     # OpenAPI 3.1 与三个 JSON Schema
+│   ├── tests/                       # 协议、配置、图片、路网、邀请码及合同测试
 │   └── src/
 │       ├── main.cpp                 # 入口：配置加载 → 连接池 → 路由注册 → 启动
 │       ├── config/
-│       │   └── AppConfig.{h,cpp}    # 环境变量解析 (HTTP / DB / JWT)
+│       │   └── AppConfig.{h,cpp}    # HTTP/DB/JWT/设备/Origin 配置
 │       ├── controllers/
 │       │   ├── AuthController.{h,cpp}      # register · login · me · change-password · logout
-│       │   ├── AdminController.{h,cpp}     # 用户 CRUD · 统计 · 角色权限
+│       │   ├── AdminController.{h,cpp}     # 用户、统计、角色与邀请码管理
 │       │   ├── ProjectController.{h,cpp}   # 项目/地图 CRUD · 文件上传
 │       │   ├── MapArtifactController.{h,cpp} # 地图原图不可变制品 API
 │       │   ├── RoadNetworkController.{h,cpp} # 路网不可变版本 API
@@ -114,57 +120,37 @@ ROC-SYSTEM/
 │       └── utils/
 │           ├── JwtHelper.{h,cpp}           # JWT 签发与验证 (HMAC-SHA256)
 │           ├── PasswordHash.{h,cpp}        # 密码哈希 (SHA-256 + 随机盐)
+│           ├── InvitationCode.{h,cpp}      # 密码学随机一次性邀请码
 │           └── AuditLogger.h               # 审计日志工具
-│   ├── schemas/                            # OpenAPI 3.1 + JSON Schema 机器可读合同
-│   └── tests/                              # 协议、配置、图片、路网与 API 合同测试
 ├── roc-frontend/
+│   ├── e2e/road-network-editor.spec.ts     # 画布与键盘 Playwright 测试
 │   ├── index.html
 │   ├── package.json                        # React 18 · shadcn/ui · Recharts · Lucide
 │   ├── vite.config.ts                      # API 代理 + Tailwind v4
 │   └── src/
 │       ├── main.tsx                        # React 入口
 │       ├── App.tsx                         # AuthContext · Router · ProtectedRoute · SuperAdminRoute
-│       ├── index.css                       # 全局样式
+│       ├── app/                            # 认证、布局和实时状态 Provider
+│       ├── shared/
+│       │   ├── api/                        # 统一 client/config/errors
+│       │   ├── styles/                     # Tailwind 入口与设计变量
+│       │   └── ui/                         # 公共页面状态和格式化组件
+│       ├── features/                       # 项目、地图、车辆、路网、下发和邀请码模型
 │       ├── types/
 │       │   └── robot.ts                    # Robot · RobotPosition · RobotVelocity · PathNode
-│       ├── styles/
-│       │   └── globals.css                 # Tailwind 指令
 │       ├── guidelines/
 │       │   └── Guidelines.md               # 前端开发指南
 │       └── components/
-│           ├── HomePage.tsx                # 首页导航 · 功能卡片
-│           ├── LoginPage.tsx               # 登录表单
-│           ├── RegisterPage.tsx            # 注册表单
-│           ├── ProfilePage.tsx             # 个人信息 · 密码修改
-│           ├── ProjectsPage.tsx            # 项目列表 CRUD
-│           ├── ProjectDetailPage.tsx       # 项目详情 · 地图列表
-│           ├── MapDetailPage.tsx           # 统一 SVG 地图 · 实时车辆 · 路网
-│           ├── RoadNetworkEditorPage.tsx   # 路网拓扑编辑 · 校验 · 版本历史
-│           ├── MapUploadModal.tsx          # 地图上传弹窗
-│           ├── VehiclePopup.tsx            # 车辆详情悬浮窗
-│           ├── PerformanceMonitor.tsx      # 性能监控面板
-│           ├── SuperAdminPage.tsx          # 用户管理 · 统计仪表盘
-│           ├── ProtocolsPage.tsx           # 协议文档展示
-│           ├── PuzzleVerification.tsx      # 拼图验证码
-│           ├── figma/
-│           │   └── ImageWithFallback.tsx   # 图片加载降级
-│           └── ui/                         # 49 个 shadcn/ui 组件
-│               ├── accordion · alert-dialog · alert · aspect-ratio
-│               ├── avatar · badge · breadcrumb · button
-│               ├── calendar · card · carousel · chart · checkbox · collapsible
-│               ├── command · context-menu
-│               ├── dialog · drawer · dropdown-menu
-│               ├── form · hover-card
-│               ├── input-otp · input
-│               ├── label
-│               ├── menubar
-│               ├── navigation-menu
-│               ├── pagination · popover · progress
-│               ├── radio-group · resizable
-│               ├── scroll-area · select · separator · sheet · sidebar
-│               ├── skeleton · slider · sonner · switch
-│               ├── table · tabs · textarea · toggle-group · toggle · tooltip
-│               └── use-mobile · utils
+│           ├── Home/Login/Register/Profile # 公开入口和账户页面
+│           ├── Projects/Project*           # 项目、地图、车辆和设置页面
+│           ├── MapDetailPage.tsx           # 统一 SVG 地图与实时车辆
+│           ├── RoadNetworkEditorPage.tsx   # 路网编辑器装配页
+│           ├── road-network-editor/        # 画布、图层、工具栏、面板及控制器
+│           ├── *DeployDialog.tsx           # 地图/路网批量下发
+│           ├── InvitationCodesPanel.tsx    # 超级管理员邀请码管理
+│           ├── ProtocolsPage.tsx           # 页面文档指南
+│           ├── SuperAdminPage.tsx          # 平台账户与统计
+│           └── ui/                         # shadcn/ui 基础组件
 ├── scripts/
 │   ├── deploy-all-docker.sh                # 一键 Docker Compose 编排
 │   ├── deploy-all.sh                       # 一键本地部署编排
@@ -178,6 +164,11 @@ ROC-SYSTEM/
 │   ├── deploy-postgres.sh                  # PostgreSQL 本地部署
 │   ├── deploy-gateway.sh                   # Nginx 网关部署
 │   ├── verify-deployment.sh                # HTTP/API/DB/WebSocket 部署验收
+│   ├── simulator/
+│   │   ├── virtual_vehicle.py              # JSON v1 虚拟车辆与制品交付客户端
+│   │   ├── virtual-vehicle.env.example     # 单车非敏感运行配置样例
+│   │   ├── requirements.txt                # 独立 Python venv 依赖
+│   │   └── roc-virtual-vehicle@.service    # 多实例 systemd 服务模板
 │   ├── lib/common.sh                       # Shell 公共函数库
 │   ├── config/
 │   │   ├── deploy.env.example              # 部署环境变量模板
@@ -419,7 +410,7 @@ graph TB
 | `/api/projects` | POST | Bearer | 创建项目 |
 | `/api/projects/{id}` | GET | Bearer | 项目详情 |
 | `/api/projects/{id}` | PATCH | Bearer | 更新项目 |
-| `/api/projects/{id}` | DELETE | Bearer | 删除项目 |
+| `/api/projects/{id}` | DELETE | Bearer | 无交付历史时解除车辆地图绑定并级联删除项目资源；有部署或车辆交付引用时返回 409 |
 | `/api/projects/{id}/maps` | GET | Bearer | 已授权项目的地图列表 |
 | `/api/projects/{pid}/maps/{mid}` | GET | Bearer | 读取单张地图及坐标元数据 |
 | `/api/projects/{pid}/maps/{mid}/image` | GET | Bearer | 校验项目归属后读取地图图片；不提供匿名 `/static` 回退 |
@@ -439,7 +430,7 @@ graph TB
 |---|---|---|---|
 | `/api/vehicles?project_id={pid}` | GET | Bearer | 按已授权项目过滤车辆；无参数时返回当前主体可见车辆 |
 | `/api/vehicles` | POST | Bearer | 注册车辆并校验项目/地图归属 |
-| `/api/vehicles/{id}` | PATCH | Bearer | 更新车辆状态/指标 |
+| `/api/vehicles/{id}` | PATCH | Bearer | 更新车辆信息、状态/指标和项目地图绑定 |
 | `/api/vehicles/{id}` | DELETE | Bearer | 删除车辆 |
 | `/api/vehicles/{id}/device-token` | GET | Bearer | 查看设备凭据配置状态和尾号 |
 | `/api/vehicles/{id}/device-token` | POST | Bearer | 生成或轮换单车凭据；明文仅返回一次 |
@@ -452,6 +443,23 @@ graph TB
 | `/ws/device` | WebSocket JSON | `Authorization: Device <token>` 握手头 | 单车心跳与完整遥测；身份由 token 映射，持久 sequence 去重，断线自动标记离线 |
 
 设备上行消息使用统一 JSON envelope，当前接受 `heartbeat` 和 `telemetry`；单条最大 64 KiB。服务端 `hello` 返回车辆 ID、30 秒心跳建议、45 秒空闲超时、大小限制和已持久化的最后客户端 sequence。持久任务以服务端 `task.available` envelope 通知，车辆不轮询；旧 ROC、status、command 和 pending 接口均不再注册。
+
+#### Python 虚拟车辆
+
+`scripts/simulator/virtual_vehicle.py` 可用于 Demo 和接口联调。一个进程只模拟一辆已注册且已签发 Device token 的车辆：建立 `/ws/device`、根据服务端 `hello` 延续持久 sequence、周期发送心跳和运动遥测，并通过设备 HTTP 接口接受、校验和原子保存地图/路网制品。它不会轮询任务，也不会把 Device token、任务租约或授权头写入日志。
+
+推荐在服务器使用独立 venv 和受限 systemd 用户运行。把 `virtual-vehicle.env.example` 复制到 `/etc/roc-virtual-vehicle/<实例>.env`，把明文 Device token 单独写入配置指定的 `0600/0640` 文件；状态和制品目录使用 `/var/lib/roc-virtual-vehicle/<实例>/`。当前同机 Demo 的 `ROC_SERVER_URL` 可设为 `http://127.0.0.1:3000`，生产切换到可信 HTTPS 域名后脚本会自动使用 WSS，并默认执行证书校验。
+
+```bash
+python3 -m venv /opt/roc-virtual-vehicle/.venv
+/opt/roc-virtual-vehicle/.venv/bin/pip install -r scripts/simulator/requirements.txt
+
+# 配置与 Device token 准备完毕后
+systemctl enable --now roc-virtual-vehicle@vehicle-01
+journalctl -u roc-virtual-vehicle@vehicle-01 -f
+```
+
+虚拟车完整下载 artifact 后会同时校验 manifest 字节数、MIME、响应 `X-Content-SHA256` 和本地 SHA-256。只有 `.part` 文件完成刷盘并原子改名后才回报 `delivered`；校验或磁盘写入失败只回报 `failed`。`delivered` 仍只表示文件已送达模拟车辆，不表示地图已加载或路网已执行。
 
 ### 持久设备任务 (Durable deployment tasks)
 
@@ -547,25 +555,25 @@ UPDATE users SET role = 'super_admin' WHERE username = '<operator>';
 在 Linux x86_64 构建机的已审批 commit/tag 检出上执行；完整版本必须与前端 `package.json` 一致，去掉预发布后缀的基础版本必须与后端 CMake 项目版本一致：
 
 ```bash
-bash scripts/build-release-bundle.sh v0.2.0-rc.1
+bash scripts/build-release-bundle.sh v0.2.1-rc1
 # 中国大陆构建机可按需使用：
-# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.0-rc.1
+# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1-rc1
 ```
 
 构建脚本会在 Docker builder 中运行后端 CTest、前端 typecheck/生产构建、lint/Vitest 和 Playwright 画布/键盘门禁，然后生成：
 
 ```text
-release-output/roc-system-v0.2.0-rc.1-amd64.bundle.tar
-release-output/roc-system-v0.2.0-rc.1-amd64.bundle.tar.sha256
+release-output/roc-system-v0.2.1-rc1-amd64.bundle.tar
+release-output/roc-system-v0.2.1-rc1-amd64.bundle.tar.sha256
 ```
 
 交付包同时包含版本化的 `migrations/` SQL，便于运行主机在切换应用容器前对现有数据库执行待应用迁移。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
 
 ```bash
-sha256sum -c roc-system-v0.2.0-rc.1-amd64.bundle.tar.sha256
-mkdir -p roc-system-v0.2.0-rc.1
-tar -xf roc-system-v0.2.0-rc.1-amd64.bundle.tar -C roc-system-v0.2.0-rc.1
-cd roc-system-v0.2.0-rc.1
+sha256sum -c roc-system-v0.2.1-rc1-amd64.bundle.tar.sha256
+mkdir -p roc-system-v0.2.1-rc1
+tar -xf roc-system-v0.2.1-rc1-amd64.bundle.tar -C roc-system-v0.2.1-rc1
+cd roc-system-v0.2.1-rc1
 bash deploy.sh --prepare
 # 编辑 release.env，填写 DB_PASSWORD、JWT_SECRET、Origin 和端口
 bash deploy.sh --install

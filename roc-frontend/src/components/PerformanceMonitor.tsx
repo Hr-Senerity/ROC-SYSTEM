@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Battery, Check, Copy, Cpu, Gauge, KeyRound, MapPinOff, MemoryStick, Plus, Radio, Search, Trash2, Truck } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../app/auth/AuthProvider';
 import { useProjectVehicles } from '../app/realtime/VehicleRealtimeProvider';
+import { parseProjectMapList, type ProjectMap } from '../features/maps/model';
 import { parseVehicle, type Vehicle, type VehicleStatus } from '../features/vehicles/model';
 import { apiRequest } from '../shared/api/client';
+import { isAbortError } from '../shared/api/errors';
 import { EmptyState } from '../shared/ui/EmptyState';
 import { ErrorState } from '../shared/ui/ErrorState';
 import { PageHeader } from '../shared/ui/PageHeader';
@@ -48,6 +50,10 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
+  const [mapId, setMapId] = useState('');
+  const [maps, setMaps] = useState<ProjectMap[]>([]);
+  const [mapsLoading, setMapsLoading] = useState(true);
+  const [updatingMapVehicleId, setUpdatingMapVehicleId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [vehicleToDelete, setVehicleToDelete] = useState<Vehicle | null>(null);
@@ -59,6 +65,21 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
   const [copied, setCopied] = useState(false);
   const query = searchParams.get('q') || '';
   const status = searchParams.get('status') || 'all';
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setMapsLoading(true);
+    void apiRequest(`/api/projects/${projectId}/maps`, { token, signal: controller.signal })
+      .then((payload) => setMaps(parseProjectMapList(payload)))
+      .catch((requestError) => {
+        if (isAbortError(requestError)) return;
+        setActionError(requestError instanceof Error ? requestError.message : '无法读取项目地图');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMapsLoading(false);
+      });
+    return () => controller.abort();
+  }, [projectId, token]);
 
   const filtered = useMemo(() => vehicles.filter((vehicle) => {
     const matchesQuery = `${vehicle.name} ${vehicle.ip}`.toLowerCase().includes(query.toLowerCase());
@@ -88,18 +109,48 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       const payload = await apiRequest<{ vehicle?: unknown }>('/api/vehicles', {
         method: 'POST',
         token,
-        body: JSON.stringify({ name: name.trim(), ip: ip.trim(), project_id: projectId }),
+        body: JSON.stringify({
+          name: name.trim(),
+          ip: ip.trim(),
+          project_id: projectId,
+          ...(mapId ? { map_id: mapId } : {}),
+        }),
       });
       if (!payload.vehicle) throw new Error('服务端未返回车辆数据');
       upsert(parseVehicle(payload.vehicle));
       setName('');
       setIp('');
+      setMapId('');
       setShowCreate(false);
     } catch (requestError) {
       setFormError(requestError instanceof Error ? requestError.message : '添加车辆失败');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const updateVehicleMap = async (vehicle: Vehicle, nextMapId: string) => {
+    if (updatingMapVehicleId) return;
+    setUpdatingMapVehicleId(vehicle.id);
+    setActionError('');
+    try {
+      const payload = await apiRequest<{ vehicle?: unknown }>(`/api/vehicles/${vehicle.id}`, {
+        method: 'PATCH',
+        token,
+        body: JSON.stringify({ map_id: nextMapId || null }),
+      });
+      if (!payload.vehicle) throw new Error('服务端未返回车辆数据');
+      upsert(parseVehicle(payload.vehicle));
+    } catch (requestError) {
+      setActionError(requestError instanceof Error ? requestError.message : '更新车辆地图失败');
+    } finally {
+      setUpdatingMapVehicleId(null);
+    }
+  };
+
+  const openCreate = () => {
+    setMapId(maps.find((map) => map.isDefault)?.id || '');
+    setShowCreate(true);
   };
 
   const deleteVehicle = async () => {
@@ -175,7 +226,7 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       <PageHeader
         title="车辆"
         description="查看本项目车辆状态、性能快照与地图绑定。"
-        actions={<><span className={`inline-flex h-9 items-center gap-2 rounded-full border px-3 text-xs font-medium ${connectionState === 'live' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : connectionState === 'connecting' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}><Radio className="size-3.5" />{connectionState === 'live' ? '实时连接' : connectionState === 'connecting' ? '正在连接' : connectionState === 'offline' ? '实时服务离线' : '轮询保障'}</span><Button onClick={() => setShowCreate(true)}><Plus />添加车辆</Button></>}
+        actions={<><span className={`inline-flex h-9 items-center gap-2 rounded-full border px-3 text-xs font-medium ${connectionState === 'live' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : connectionState === 'connecting' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}><Radio className="size-3.5" />{connectionState === 'live' ? '实时连接' : connectionState === 'connecting' ? '正在连接' : connectionState === 'offline' ? '实时服务离线' : '轮询保障'}</span><Button onClick={openCreate}><Plus />添加车辆</Button></>}
       />
 
       <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row">
@@ -198,7 +249,7 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
       {(error || actionError) && <ErrorState message={actionError || error} onRetry={() => { setActionError(''); void refresh(); }} />}
       {loading && <div className="rounded-lg border bg-white p-8 text-center text-slate-500">正在加载车辆…</div>}
       {!loading && !error && vehicles.length === 0 && (
-        <EmptyState title="项目中还没有车辆" description="添加车辆后，可在这里查看状态并绑定项目地图。" action={<Button onClick={() => setShowCreate(true)}><Plus />添加第一辆车</Button>} />
+        <EmptyState title="项目中还没有车辆" description="添加车辆后，可在这里查看状态并绑定项目地图。" action={<Button onClick={openCreate}><Plus />添加第一辆车</Button>} />
       )}
       {!loading && !error && vehicles.length > 0 && filtered.length === 0 && (
         <EmptyState title="没有匹配的车辆" description="调整搜索词或状态筛选后重试。" />
@@ -224,7 +275,19 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
                   <span className="flex items-center gap-1.5 text-slate-700"><Gauge className="size-4 text-slate-400 lg:hidden" />{metric(vehicle.localizationConfidence)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3 lg:contents">
-                  {!vehicle.mapId && <span className="flex items-center gap-1 text-xs text-amber-700 lg:col-start-1 lg:row-start-2"><MapPinOff className="size-3.5" />未绑定地图</span>}
+                  <label className="flex min-w-0 items-center gap-1 text-xs lg:col-start-1 lg:row-start-2">
+                    {!vehicle.mapId && <MapPinOff className="size-3.5 shrink-0 text-amber-700" />}
+                    <span className="sr-only">{vehicle.name} 绑定地图</span>
+                    <select
+                      value={vehicle.mapId || ''}
+                      disabled={mapsLoading || updatingMapVehicleId === vehicle.id}
+                      onChange={(event) => void updateVehicleMap(vehicle, event.target.value)}
+                      className={`h-8 min-w-0 max-w-44 rounded-md border bg-white px-2 text-xs ${vehicle.mapId ? 'border-slate-200 text-slate-700' : 'border-amber-200 text-amber-800'}`}
+                    >
+                      <option value="">未绑定地图</option>
+                      {maps.map((map) => <option key={map.id} value={map.id}>{map.name}{map.isDefault ? '（默认）' : ''}</option>)}
+                    </select>
+                  </label>
                   <div className="flex items-center lg:col-start-7 lg:row-start-1">
                     <Button variant="ghost" size="icon" aria-label={`管理 ${vehicle.name} 的设备凭据`} onClick={() => void openCredential(vehicle)} className="text-blue-700"><KeyRound /></Button>
                     <Button variant="ghost" size="icon" aria-label={`删除 ${vehicle.name}`} onClick={() => setVehicleToDelete(vehicle)} className="text-red-700"><Trash2 /></Button>
@@ -243,6 +306,14 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
             {formError && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{formError}</p>}
             <label className="block space-y-1.5"><span className="text-sm font-medium">车辆名称</span><Input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
             <label className="block space-y-1.5"><span className="text-sm font-medium">IPv4 地址</span><Input value={ip} onChange={(event) => setIp(event.target.value)} placeholder="192.168.1.10" /></label>
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">绑定地图 <span className="font-normal text-slate-500">（可选）</span></span>
+              <select value={mapId} onChange={(event) => setMapId(event.target.value)} disabled={mapsLoading} className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm">
+                <option value="">暂不绑定</option>
+                {maps.map((map) => <option key={map.id} value={map.id}>{map.name}{map.isDefault ? '（默认）' : ''}</option>)}
+              </select>
+              {!mapsLoading && maps.length === 0 && <p className="text-xs text-amber-700">当前项目尚无地图，可创建车辆后再绑定。</p>}
+            </label>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setShowCreate(false)} disabled={submitting}>取消</Button><Button onClick={() => void createVehicle()} disabled={submitting}>{submitting ? '添加中…' : '添加车辆'}</Button></DialogFooter>
         </DialogContent>
