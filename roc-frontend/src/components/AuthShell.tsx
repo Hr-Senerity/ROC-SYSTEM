@@ -106,6 +106,7 @@ export function authErrorMessage(message: string | undefined, fallback: string):
   if (normalized.includes('invalid username or password')) return '用户名或密码错误，请重新输入';
   if (normalized.includes('username already')) return '该用户名已被使用';
   if (normalized.includes('email already')) return '该邮箱已被注册';
+  if (normalized.includes('invitation code') || normalized.includes('invitation_code')) return '邀请码无效、已使用或已撤销';
   if (normalized.includes('failed to fetch') || normalized.includes('network')) return '暂时无法连接服务器，请稍后重试';
   return message;
 }

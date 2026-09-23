@@ -48,7 +48,7 @@
       "post": {
         "operationId": "registerAccount",
         "tags": ["Auth"],
-        "summary": "Register a regular account",
+        "summary": "Register a regular account with a one-time invitation code",
         "security": [],
         "requestBody": {
           "required": true,
@@ -57,6 +57,7 @@
         "responses": {
           "201": { "$ref": "#/components/responses/AuthSuccess" },
           "400": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
           "409": { "$ref": "#/components/responses/Error" }
         }
       }
@@ -458,6 +459,29 @@
         "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
       }
     },
+    "/api/admin/invitation-codes": {
+      "get": {
+        "operationId": "listRegistrationInvitationCodes",
+        "tags": ["Administration"],
+        "summary": "List recent one-time registration invitation codes",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" } }
+      },
+      "post": {
+        "operationId": "createRegistrationInvitationCode",
+        "tags": ["Administration"],
+        "summary": "Generate a five-character one-time registration invitation code",
+        "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/admin/invitation-codes/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "delete": {
+        "operationId": "revokeRegistrationInvitationCode",
+        "tags": ["Administration"],
+        "summary": "Revoke an unused registration invitation code",
+        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/api/admin/stats": {
       "get": {
         "operationId": "getAdminStats",
@@ -487,7 +511,7 @@
       "Uuid": { "type": "string", "format": "uuid" },
       "JsonSuccess": { "type": "object", "required": ["ok"], "properties": { "ok": { "const": true } }, "additionalProperties": true },
       "Error": { "type": "object", "required": ["ok"], "properties": { "ok": { "const": false }, "code": { "type": "string" }, "message": { "type": "string" }, "error": { "type": "string" } }, "additionalProperties": true },
-      "RegisterRequest": { "type": "object", "additionalProperties": false, "required": ["username", "email", "password"], "properties": { "username": { "type": "string", "minLength": 1, "maxLength": 64 }, "email": { "type": "string", "format": "email", "maxLength": 128 }, "password": { "type": "string", "minLength": 6 } } },
+      "RegisterRequest": { "type": "object", "additionalProperties": false, "required": ["username", "email", "password", "invitation_code"], "properties": { "username": { "type": "string", "minLength": 1, "maxLength": 64 }, "email": { "type": "string", "format": "email", "maxLength": 128 }, "password": { "type": "string", "minLength": 6 }, "invitation_code": { "type": "string", "allOf": [{ "pattern": "^[A-Za-z0-9]{5}$" }, { "pattern": "[A-Za-z]" }, { "pattern": "[0-9]" }] } } },
       "LoginRequest": { "type": "object", "additionalProperties": false, "required": ["username", "password"], "properties": { "username": { "type": "string" }, "password": { "type": "string" } } },
       "ChangePasswordRequest": { "type": "object", "additionalProperties": false, "required": ["old_password", "new_password"], "properties": { "old_password": { "type": "string" }, "new_password": { "type": "string", "minLength": 6 } } },
       "AuthSuccess": { "type": "object", "required": ["ok", "token", "user"], "properties": { "ok": { "const": true }, "token": { "type": "string" }, "user": { "type": "object" } }, "additionalProperties": false },

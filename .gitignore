@@ -53,7 +53,7 @@ desktop.ini
 
 # Docker 相关
 docker-compose.override.yml
-.dockerignore
+/release-output/
 
 # 数据库文件
 *.db

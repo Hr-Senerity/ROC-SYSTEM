@@ -42,7 +42,7 @@ export function LoginPage() {
       eyebrow="Welcome back"
       title="欢迎回来"
       description="登录后继续管理你的项目、地图与机器人运行状态。"
-      footer={<><span>还没有账户？</span>{' '}<Link to="/register" className="font-semibold text-[#2f6bff] transition hover:text-[#1f56dd]">免费创建账户</Link></>}
+      footer={<><span>已有邀请码？</span>{' '}<Link to="/register" className="font-semibold text-[#2f6bff] transition hover:text-[#1f56dd]">创建账户</Link></>}
     >
       {error && (
         <div role="alert" className="mb-5 flex items-start gap-2.5 rounded-xl border border-[#f5c8c7] bg-[#fff5f4] px-3.5 py-3 text-sm leading-5 text-[#b63c38]">

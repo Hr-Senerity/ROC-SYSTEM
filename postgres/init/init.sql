@@ -59,6 +59,27 @@ CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token_hash);
 
+-- 注册邀请码：由超级管理员生成，单次使用，可在使用前撤销
+CREATE TABLE IF NOT EXISTS registration_invites (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  code VARCHAR(5) NOT NULL UNIQUE
+    CHECK (code ~ '^[A-Z0-9]{5}$' AND code ~ '[A-Z]' AND code ~ '[0-9]'),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  used_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  used_at TIMESTAMPTZ,
+  revoked_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  revoked_at TIMESTAMPTZ,
+  CHECK (used_by IS NULL OR used_at IS NOT NULL),
+  CHECK (used_at IS NULL OR revoked_at IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_registration_invites_created
+  ON registration_invites(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_registration_invites_available
+  ON registration_invites(created_at DESC)
+  WHERE used_at IS NULL AND revoked_at IS NULL;
+
 -- ============================================================
 -- P1: 用户业务数据
 -- ============================================================

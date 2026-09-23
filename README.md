@@ -32,7 +32,7 @@ graph TB
     end
 
     subgraph Database["PostgreSQL 16"]
-        Tables["users · projects · maps · vehicles<br/>resource revisions · deployment tasks/events"]
+        Tables["users · registration_invites · projects · maps · vehicles<br/>resource revisions · deployment tasks/events"]
     end
 
     Workspace -->|"HTTP"| NGX
@@ -168,10 +168,12 @@ ROC-SYSTEM/
 ├── scripts/
 │   ├── deploy-all-docker.sh                # 一键 Docker Compose 编排
 │   ├── deploy-all.sh                       # 一键本地部署编排
+│   ├── build-release-bundle.sh             # 构建机生成可转移的镜像交付包
 │   ├── deploy-backend-docker.sh            # 后端 Docker 构建部署
 │   ├── deploy-backend.sh                   # 后端本地部署
 │   ├── deploy-frontend-docker.sh           # 前端 Docker 构建部署
 │   ├── deploy-frontend.sh                  # 前端本地部署
+│   ├── deploy-release-runtime.sh           # 交付包内的运行机部署脚本
 │   ├── deploy-postgres-docker.sh           # PostgreSQL Docker 部署
 │   ├── deploy-postgres.sh                  # PostgreSQL 本地部署
 │   ├── deploy-gateway.sh                   # Nginx 网关部署
@@ -245,8 +247,11 @@ App.tsx → AuthContext (JWT token / role / username → localStorage)
 ### 认证流
 
 ```
-Register/Login
-  → POST /api/auth/register|login { username, password }
+Register
+  → POST /api/auth/register { username, email, password, invitation_code }
+    → 事务锁定一次性邀请码 → 创建 regular 账户 → 标记邀请码已使用
+Login
+  → POST /api/auth/login { username, password }
     → 密码哈希: SHA-256(password + 16-byte random salt)
     → JWT 签发: HMAC-SHA256(header.payload, JWT_SECRET)
     → 返回 { token, user: { user_id, username, role } }
@@ -357,7 +362,7 @@ graph TB
     end
 
     subgraph Database["PostgreSQL 16"]
-        Tables["users · projects · maps · vehicles<br/>resource revisions · deployment tasks/events"]
+        Tables["users · registration_invites · projects · maps · vehicles<br/>resource revisions · deployment tasks/events"]
     end
 
     Workspace -->|"HTTP"| NGX
@@ -386,7 +391,7 @@ graph TB
 
 | 端点 | Method | 认证 | 说明 |
 |---|---|---|---|
-| `/api/auth/register` | POST | 公开 | 用户注册，返回 JWT |
+| `/api/auth/register` | POST | 邀请码 | 使用有效的一次性 5 位邀请码注册普通用户并返回 JWT |
 | `/api/auth/login` | POST | 公开 | 用户登录，返回 JWT |
 | `/api/auth/logout` | POST | 公开 | 登出 (客户端丢弃 token) |
 | `/api/auth/me` | GET | Bearer | 获取当前用户信息 |
@@ -401,6 +406,9 @@ graph TB
 | `/api/admin/users/{id}` | DELETE | super_admin | 删除用户 |
 | `/api/admin/users/{id}/status` | PATCH | super_admin | 启用/停用用户 |
 | `/api/admin/users/{id}/vehicles` | GET | super_admin | 用户的车辆列表 |
+| `/api/admin/invitation-codes` | GET | super_admin | 查看最近邀请码及使用/撤销状态 |
+| `/api/admin/invitation-codes` | POST | super_admin | 随机生成 5 位数字与大写字母一次性邀请码 |
+| `/api/admin/invitation-codes/{id}` | DELETE | super_admin | 撤销尚未使用的邀请码 |
 | `/api/admin/stats` | GET | super_admin | 系统统计数据 |
 
 ### 项目 (Projects)
@@ -510,7 +518,7 @@ graph TB
 - Docker & Docker Compose
 - C++ 编译器 (GCC/Clang) + CMake 3.16+
 
-### Docker Compose 一键部署
+### 开发/构建机 Docker Compose 部署
 
 ```bash
 cp docker/compose/.env.example docker/compose/.env
@@ -519,9 +527,55 @@ bash scripts/deploy-all-docker.sh --up
 bash scripts/verify-deployment.sh
 ```
 
+这一路径包含 Docker 镜像构建，只能在开发机或具备足够 CPU、内存和 Docker namespace 权限的构建机执行。资源受限的运行主机不得执行 `deploy-all-docker.sh --up`、`docker compose --build` 或 `docker build`。
+
 `verify-deployment.sh` 默认验证本机对外地址；分离网关或公网域名可通过 `VERIFY_BASE_URL=https://example.com` 指定。它会检查首页、后端健康、数据库连通与 WebSocket Upgrade。
 
-全新数据库不会创建固定密码的管理员。先通过应用注册运维账号，再由数据库管理员将该账号的 `role` 更新为 `super_admin`。不要在仓库或部署脚本中保存初始管理员密码。
+数据库迁移 `009_registration_invites.sql` 完成后，已有 `super_admin` 可在“平台账户 → 注册邀请码”生成一次性邀请码。全新空数据库仍不会创建固定管理员、口令或固定邀请码；数据库运维人员应临时插入一个自选的 5 位大写字母数字 bootstrap 邀请码（必须同时包含数字和字母），完成首个账户注册后把该账户提升为 `super_admin`。后续邀请码全部由后台生成，不要在仓库或部署脚本中保存 bootstrap 邀请码或初始管理员密码。
+
+```sql
+-- 仅限全新空数据库首次引导；把占位符替换为临时随机码，不要提交该值。
+INSERT INTO registration_invites (code) VALUES ('<5位数字字母码>');
+-- 注册完成后精确提升目标账户：
+UPDATE users SET role = 'super_admin' WHERE username = '<operator>';
+```
+
+### 构建机到运行主机的 release 交付
+
+生产或资源受限主机采用“构建机产出、运行机加载”的两阶段流程。交付单位是包含三个已构建 Docker 镜像的 release bundle，不直接复制动态链接的后端二进制，也不把源码或编译工具带到运行主机。
+
+在 Linux x86_64 构建机的已审批 commit/tag 检出上执行；完整版本必须与前端 `package.json` 一致，去掉预发布后缀的基础版本必须与后端 CMake 项目版本一致：
+
+```bash
+bash scripts/build-release-bundle.sh v0.2.0-rc.1
+# 中国大陆构建机可按需使用：
+# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.0-rc.1
+```
+
+构建脚本会在 Docker builder 中运行后端 CTest、前端 typecheck/生产构建、lint/Vitest 和 Playwright 画布/键盘门禁，然后生成：
+
+```text
+release-output/roc-system-v0.2.0-rc.1-amd64.bundle.tar
+release-output/roc-system-v0.2.0-rc.1-amd64.bundle.tar.sha256
+```
+
+交付包同时包含版本化的 `migrations/` SQL，便于运行主机在切换应用容器前对现有数据库执行待应用迁移。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
+
+```bash
+sha256sum -c roc-system-v0.2.0-rc.1-amd64.bundle.tar.sha256
+mkdir -p roc-system-v0.2.0-rc.1
+tar -xf roc-system-v0.2.0-rc.1-amd64.bundle.tar -C roc-system-v0.2.0-rc.1
+cd roc-system-v0.2.0-rc.1
+bash deploy.sh --prepare
+# 编辑 release.env，填写 DB_PASSWORD、JWT_SECRET、Origin 和端口
+bash deploy.sh --install
+```
+
+`deploy.sh --install` 会校验运行主机 CPU 架构、内部镜像包和 manifest，执行 `docker load`，再以 `--no-build --pull never` 启动三个服务。release Compose 没有 `build:` 和源码挂载，因此不会在运行主机编译或访问镜像仓库。首次从旧 Compose 迁移时，如同名的 `roc-frontend`、`roc-backend`、`roc-postgres` 容器已存在，应先停止并移除这三个旧容器，但不要删除任何数据卷；后续 release 均使用固定项目名 `roc-system`，可直接滚动重建容器。
+
+旧独立数据库脚本默认使用 `roc_postgres_data`，旧 Compose 默认使用 `roc_pgdata`。迁移前必须用 `docker volume ls` 和旧容器的 mount 信息确认实际卷名，再填写 `POSTGRES_DOCKER_VOLUME` 与 `BACKEND_MAP_VOLUME`。`REQUIRE_EXISTING_DATA_VOLUMES=true` 会在卷不存在时拒绝启动，防止误建空数据库；只有确认是全新安装时才改为 `false`。
+
+构建包本身不包含数据库口令、JWT 密钥或证书；根目录 `.dockerignore` 也会阻止本地环境文件、私钥、构建结果和测试报告进入 Docker 构建上下文。release 构建默认拒绝存在未提交变更的工作区，并把精确 Git commit 写入 manifest。`release.env` 只在运行主机创建，并应保持 `0600` 权限。数据库备份继续由云服务器快照/备份服务负责，至少覆盖配置的 PostgreSQL 数据卷和地图制品卷。
 
 ### 前端开发
 
@@ -543,7 +597,7 @@ BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 JWT_SECRET=my-secret \
 
 ## 验证与发布门禁
 
-当前基线包含 5 个 CTest 后端测试、27 个 Vitest 前端单元/组件测试和 2 个 Playwright 画布/键盘测试。发布前至少执行：
+当前代码基线包含 6 个 CTest 后端测试、29 个 Vitest 前端单元/组件测试和 2 个 Playwright 画布/键盘测试。发布前至少执行：
 
 ```bash
 # 后端（Linux 构建主机）
@@ -561,7 +615,7 @@ corepack pnpm run build
 corepack pnpm run test:e2e
 ```
 
-API 合同测试会校验 OpenAPI 与三份 JSON Schema，并确认 44 个 REST 操作的路由、认证和唯一 `operationId`。目标主机还应运行全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的最终交付主机或 CI 上完成。
+API 合同测试会校验 OpenAPI 与三份 JSON Schema，并确认 47 个 REST 操作的路由、认证和唯一 `operationId`。目标主机还应运行邀请码并发单次消费、全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的独立构建机或 CI 上完成。
 
 ## 用户角色
 

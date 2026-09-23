@@ -28,6 +28,13 @@ const accountTaskEndpoints = [
   { method: 'POST', path: '/api/projects/{project_id}/deployments/{batch_id}/cancel', purpose: '取消尚未进入最终交付阶段的任务' },
 ] as const;
 
+const invitationEndpoints = [
+  { method: 'POST', path: '/api/auth/register', purpose: '提交 username、email、password 与一次性 invitation_code；成功后邀请码立即失效' },
+  { method: 'GET', path: '/api/admin/invitation-codes', purpose: '超级管理员查看最近邀请码及可用、已使用、已撤销状态' },
+  { method: 'POST', path: '/api/admin/invitation-codes', purpose: '超级管理员随机生成 5 位数字与大写字母邀请码' },
+  { method: 'DELETE', path: '/api/admin/invitation-codes/{id}', purpose: '超级管理员撤销尚未使用的邀请码' },
+] as const;
+
 const envelopeFields = [
   ['protocol_version', 'integer', '固定为 1', '协议主版本；不支持的版本会被拒绝'],
   ['message_id', 'UUID string', '必填', '本条消息的幂等标识'],
@@ -194,6 +201,21 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
             设备通过独立 WebSocket 常连接上报心跳与遥测并接收任务通知，再通过 HTTP(S) 接受任务、下载制品和回报状态；浏览器使用账户 JWT 按项目订阅数据库提交后的车辆与任务状态。ROC 二进制和任务轮询接口不再提供。
           </p>
         </div>
+
+        <section className="mt-6 rounded-xl border border-indigo-200 bg-indigo-50/70 p-4">
+          <div className="flex gap-3">
+            <KeyRound className="mt-0.5 size-5 shrink-0 text-indigo-700" aria-hidden="true" />
+            <div><h2 className="font-semibold text-indigo-950">账户注册与邀请码</h2><p className="mt-1 text-sm leading-6 text-indigo-950/75">注册仅创建普通用户，并必须消费一个由超级管理员生成的一次性邀请码。</p></div>
+          </div>
+          <div className="mt-4 divide-y divide-indigo-200/70 border-t border-indigo-200/70">
+            {invitationEndpoints.map((endpoint) => (
+              <div key={`${endpoint.method}-${endpoint.path}`} className="grid gap-2 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
+                <MethodBadge method={endpoint.method} />
+                <div className="min-w-0"><code className="break-all text-sm">{endpoint.path}</code><p className="mt-1 text-sm text-indigo-950/70">{endpoint.purpose}</p></div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <section aria-labelledby="access-flow-heading" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[

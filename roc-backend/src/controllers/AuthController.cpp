@@ -3,8 +3,10 @@
 #include <drogon/drogon.h>
 #include <json/json.h>
 #include <chrono>
+#include <stdexcept>
 
 #include "db/PostgresClient.h"
+#include "utils/InvitationCode.h"
 #include "utils/JwtHelper.h"
 #include "utils/PasswordHash.h"
 
@@ -43,9 +45,14 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
         std::string username = (*body).get("username", "").asString();
         std::string email = (*body).get("email", "").asString();
         std::string password = (*body).get("password", "").asString();
+        const auto invitationCode = roc::utils::normalizeInvitationCode(
+            (*body).get("invitation_code", "").asString());
 
-        if (username.empty() || email.empty() || password.empty()) {
-          cb(jsonResp(k400BadRequest, makeResp(false, "username, email, password are required")));
+        if (username.empty() || email.empty() || password.empty() ||
+            !invitationCode.has_value()) {
+          cb(jsonResp(k400BadRequest, makeResp(
+              false,
+              "username, email, password and a five-character invitation_code are required")));
           return;
         }
 
@@ -55,13 +62,26 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
         }
 
         try {
-          roc::db::PostgresClient pg(connStr);
+          // Lock, validate and consume the one-time invitation code in the same
+          // transaction as account creation. Concurrent attempts can therefore
+          // never create two accounts from one code.
+          pqxx::connection connection(connStr);
+          pqxx::work transaction(connection);
+          const auto invitation = transaction.exec_params(
+              "SELECT id FROM registration_invites "
+              "WHERE code = $1 AND used_at IS NULL AND revoked_at IS NULL "
+              "FOR UPDATE",
+              *invitationCode);
+          if (invitation.empty()) {
+            cb(jsonResp(k403Forbidden, makeResp(
+                false, "Invalid or unavailable invitation code")));
+            return;
+          }
 
-          // Check if username or email already exists
-          auto existing = pg.queryOneParams(
+          const auto existing = transaction.exec_params(
               "SELECT id FROM users WHERE username = $1 OR email = $2",
-              {username, email});
-          if (!existing.isNull()) {
+              username, email);
+          if (!existing.empty()) {
             cb(jsonResp(k409Conflict, makeResp(false, "Username or email already exists")));
             return;
           }
@@ -69,10 +89,26 @@ void registerAuthRoutes(const roc::config::AppConfig &cfg, const std::string &co
           std::string salt = roc::utils::generateSalt();
           std::string hash = roc::utils::hashPassword(password, salt);
 
-          std::string userId = pg.insertReturningParams(
+          const auto inserted = transaction.exec_params(
               "INSERT INTO users (username, email, password_hash, salt, role) "
-              "VALUES ($1, $2, $3, $4, 'regular') RETURNING id",
-              {username, email, hash, salt});
+              "VALUES ($1, $2, $3, $4, 'regular') "
+              "ON CONFLICT DO NOTHING RETURNING id",
+              username, email, hash, salt);
+          if (inserted.empty()) {
+            cb(jsonResp(k409Conflict, makeResp(false, "Username or email already exists")));
+            return;
+          }
+          const std::string userId = inserted[0][0].as<std::string>();
+
+          const auto consumed = transaction.exec_params(
+              "UPDATE registration_invites "
+              "SET used_by = $1::uuid, used_at = NOW() "
+              "WHERE id = $2::uuid AND used_at IS NULL AND revoked_at IS NULL",
+              userId, invitation[0][0].as<std::string>());
+          if (consumed.affected_rows() != 1) {
+            throw std::runtime_error("Invitation code consumption failed");
+          }
+          transaction.commit();
 
           // Create JWT
           Json::Value payload;

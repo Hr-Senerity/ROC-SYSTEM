@@ -11,6 +11,7 @@ import {
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
+import { InvitationCodesPanel } from './InvitationCodesPanel';
 
 interface UserData {
   id: string;
@@ -140,7 +141,7 @@ export function SuperAdminPage() {
     <section className="space-y-6">
       <PageHeader
         title="平台账户"
-        description="这里管理数据库中的全部平台账户及其资源，不是当前账户的项目成员列表。新注册账户默认为普通用户。"
+        description="这里管理数据库中的全部平台账户及其资源，并签发一次性注册邀请码。新注册账户始终为普通用户。"
         actions={<span className="inline-flex h-9 items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-700"><ShieldCheck className="size-4" />超级管理员专属</span>}
       />
 
@@ -153,6 +154,8 @@ export function SuperAdminPage() {
           <StatCard icon={<span className="size-2.5 rounded-full bg-emerald-500" />} label="在线车辆" value={stats.online_vehicles} tone="emerald" />
         </div>
       )}
+
+      <InvitationCodesPanel />
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 p-4 sm:p-5">

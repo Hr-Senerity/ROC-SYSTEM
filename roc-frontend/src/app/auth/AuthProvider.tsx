@@ -32,7 +32,7 @@ interface AuthContextType {
   sessionError: string;
   login: (username: string, password: string) => Promise<{ ok: boolean; message?: string }>;
   logout: () => void;
-  register: (username: string, email: string, password: string) => Promise<{ ok: boolean; message?: string }>;
+  register: (username: string, email: string, password: string, invitationCode: string) => Promise<{ ok: boolean; message?: string }>;
   refreshSession: () => Promise<void>;
 }
 
@@ -111,11 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [storeSession]);
 
-  const register = useCallback(async (user: string, email: string, password: string) => {
+  const register = useCallback(async (user: string, email: string, password: string, invitationCode: string) => {
     try {
       const data = await apiRequest<AuthResponse>('/api/auth/register', {
         method: 'POST',
-        body: JSON.stringify({ username: user, email, password }),
+        body: JSON.stringify({ username: user, email, password, invitation_code: invitationCode }),
       });
       storeSession(data.token, data.user.role, data.user.username);
       return { ok: true };

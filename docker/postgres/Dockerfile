@@ -3,6 +3,12 @@
 
 FROM postgres:16-alpine
 
+ARG ROC_VERSION=dev
+ARG ROC_REVISION=unknown
+LABEL org.opencontainers.image.title="ROC-SYSTEM PostgreSQL" \
+      org.opencontainers.image.version="${ROC_VERSION}" \
+      org.opencontainers.image.revision="${ROC_REVISION}"
+
 # 设置环境变量
 ENV POSTGRES_DB=roc_db
 ENV POSTGRES_USER=roc_user

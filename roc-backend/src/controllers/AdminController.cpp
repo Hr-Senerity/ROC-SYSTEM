@@ -3,8 +3,11 @@
 #include <drogon/drogon.h>
 #include <json/json.h>
 #include <sstream>
+#include <stdexcept>
 
 #include "db/PostgresClient.h"
+#include "utils/InputValidation.h"
+#include "utils/InvitationCode.h"
 #include "utils/JwtHelper.h"
 
 namespace roc::controller {
@@ -302,6 +305,149 @@ void registerAdminRoutes(const roc::config::AppConfig &cfg, const std::string &c
         }
       },
       {Get, Options});
+
+  // GET /api/admin/invitation-codes — recent one-time registration codes
+  app().registerHandler(
+      "/api/admin/invitation-codes",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb) {
+        const auto payload = authRequest(req, jwtSecret);
+        if (!isSuperAdmin(payload)) {
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          return;
+        }
+
+        try {
+          roc::db::PostgresClient pg(connStr);
+          auto invitations = pg.query(
+              "SELECT i.id, i.code, i.created_at, i.used_at, i.revoked_at, "
+              "creator.username AS created_by_username, "
+              "consumer.username AS used_by_username, "
+              "CASE WHEN i.used_at IS NOT NULL THEN 'used' "
+              "WHEN i.revoked_at IS NOT NULL THEN 'revoked' ELSE 'available' END AS status "
+              "FROM registration_invites i "
+              "LEFT JOIN users creator ON creator.id = i.created_by "
+              "LEFT JOIN users consumer ON consumer.id = i.used_by "
+              "ORDER BY i.created_at DESC LIMIT 100");
+
+          Json::Value response;
+          response["ok"] = true;
+          response["invitation_codes"] = invitations;
+          cb(jsonResp(k200OK, response));
+        } catch (const std::exception &error) {
+          LOG_ERROR << "Admin list invitation codes error: " << error.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
+        }
+      },
+      {Get, Options});
+
+  // POST /api/admin/invitation-codes — generate a five-character code
+  app().registerHandler(
+      "/api/admin/invitation-codes",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb) {
+        const auto payload = authRequest(req, jwtSecret);
+        if (!isSuperAdmin(payload)) {
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          return;
+        }
+
+        try {
+          const std::string adminId = (*payload)["user_id"].asString();
+          pqxx::connection connection(connStr);
+          pqxx::work transaction(connection);
+          pqxx::result inserted;
+
+          for (int attempt = 0; attempt < 20 && inserted.empty(); ++attempt) {
+            const auto code = roc::utils::generateInvitationCode();
+            inserted = transaction.exec_params(
+                "INSERT INTO registration_invites (code, created_by) "
+                "VALUES ($1, $2::uuid) ON CONFLICT (code) DO NOTHING "
+                "RETURNING id, code, created_at",
+                code, adminId);
+          }
+          if (inserted.empty()) {
+            throw std::runtime_error("Unable to allocate a unique invitation code");
+          }
+
+          const std::string invitationId = inserted[0]["id"].as<std::string>();
+          transaction.exec_params(
+              "INSERT INTO audit_logs (user_id, action, target_type, target_id, detail) "
+              "VALUES ($1::uuid, 'create_invitation_code', 'registration_invite', $2, "
+              "'Created one-time registration invitation')",
+              adminId, invitationId);
+          transaction.commit();
+
+          Json::Value invitation;
+          invitation["id"] = invitationId;
+          invitation["code"] = inserted[0]["code"].as<std::string>();
+          invitation["created_at"] = inserted[0]["created_at"].as<std::string>();
+          invitation["created_by_username"] = (*payload)["username"].asString();
+          invitation["status"] = "available";
+
+          Json::Value response;
+          response["ok"] = true;
+          response["invitation_code"] = invitation;
+          cb(jsonResp(k201Created, response));
+        } catch (const std::exception &error) {
+          LOG_ERROR << "Admin create invitation code error: " << error.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
+        }
+      },
+      {Post, Options});
+
+  // DELETE /api/admin/invitation-codes/{id} — revoke an unused code
+  app().registerHandler(
+      "/api/admin/invitation-codes/{id}",
+      [connStr, jwtSecret](const HttpRequestPtr &req,
+                            std::function<void(const HttpResponsePtr &)> &&cb,
+                            const std::string &invitationId) {
+        const auto payload = authRequest(req, jwtSecret);
+        if (!isSuperAdmin(payload)) {
+          cb(jsonResp(k403Forbidden, makeResp(false, "Requires super_admin privilege")));
+          return;
+        }
+        if (!roc::utils::isUuid(invitationId)) {
+          cb(jsonResp(k400BadRequest, makeResp(false, "Invalid invitation id")));
+          return;
+        }
+
+        try {
+          const std::string adminId = (*payload)["user_id"].asString();
+          pqxx::connection connection(connStr);
+          pqxx::work transaction(connection);
+          const auto revoked = transaction.exec_params(
+              "UPDATE registration_invites "
+              "SET revoked_by = $1::uuid, revoked_at = NOW() "
+              "WHERE id = $2::uuid AND used_at IS NULL AND revoked_at IS NULL "
+              "RETURNING id",
+              adminId, invitationId);
+          if (revoked.empty()) {
+            const auto existing = transaction.exec_params(
+                "SELECT id FROM registration_invites WHERE id = $1::uuid",
+                invitationId);
+            if (existing.empty()) {
+              cb(jsonResp(k404NotFound, makeResp(false, "Invitation code not found")));
+            } else {
+              cb(jsonResp(k409Conflict, makeResp(
+                  false, "Invitation code is already used or revoked")));
+            }
+            return;
+          }
+
+          transaction.exec_params(
+              "INSERT INTO audit_logs (user_id, action, target_type, target_id, detail) "
+              "VALUES ($1::uuid, 'revoke_invitation_code', 'registration_invite', $2, "
+              "'Revoked unused registration invitation')",
+              adminId, invitationId);
+          transaction.commit();
+          cb(jsonResp(k200OK, makeResp(true, "Invitation code revoked")));
+        } catch (const std::exception &error) {
+          LOG_ERROR << "Admin revoke invitation code error: " << error.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal server error")));
+        }
+      },
+      {Delete, Options});
 
   // GET /api/admin/stats — system overview
   app().registerHandler(

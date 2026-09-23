@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# ROC-SYSTEM 整体 Docker 部署
-# 使用 docker/compose/docker-compose.yml 编排所有服务
+# ROC-SYSTEM 开发/构建机整体 Docker 部署
+# 使用 docker/compose/docker-compose.yml 编排所有服务。
+# 资源受限的运行主机必须改用 release bundle 中的 deploy.sh。
 
 set -euo pipefail
 
@@ -19,7 +20,9 @@ usage() {
   cat <<EOF
 用法: $0 [选项]
 
-整体 Docker 部署（启动所有服务: postgres + backend + frontend）
+开发/构建机 Docker 部署（启动所有服务: postgres + backend + frontend）
+
+警告: 本脚本会构建镜像，不得在纯运行主机上使用。
 
 选项:
   --up          构建并启动所有服务（默认）
@@ -54,6 +57,7 @@ check_prereqs() {
 }
 
 do_up() {
+  log_warn "当前是开发/构建机流程，将在本机执行 Docker 镜像构建"
   log_info "构建并启动所有服务..."
   cd "$COMPOSE_DIR"
   docker_compose -f "$COMPOSE_FILE" up -d --build
@@ -69,6 +73,7 @@ do_down() {
 }
 
 do_build() {
+  log_warn "当前是开发/构建机流程，将在本机执行 Docker 镜像构建"
   log_info "重新构建镜像..."
   cd "$COMPOSE_DIR"
   docker_compose -f "$COMPOSE_FILE" build --no-cache

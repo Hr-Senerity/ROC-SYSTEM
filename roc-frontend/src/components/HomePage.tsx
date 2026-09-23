@@ -58,7 +58,7 @@ export function HomePage() {
             </p>
             <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Button className="h-12 w-full rounded-full bg-[#2f6bff] px-7 text-[15px] text-white shadow-[0_12px_28px_rgba(47,107,255,.24)] hover:-translate-y-0.5 hover:bg-[#245deb] sm:w-auto" asChild>
-                <Link to="/register">免费创建账户<ArrowRight className="size-4" /></Link>
+                <Link to="/register">使用邀请码注册<ArrowRight className="size-4" /></Link>
               </Button>
               <Button variant="ghost" className="h-12 w-full rounded-full px-7 text-[15px] text-[#3f4858] hover:bg-white hover:text-[#111827] sm:w-auto" asChild>
                 <Link to="/login">已有账户，直接进入<ChevronRight className="size-4" /></Link>

@@ -120,6 +120,9 @@ void validateOpenApi() {
       {"/api/admin/users/{id}", "delete"},
       {"/api/admin/users/{id}/status", "patch"},
       {"/api/admin/users/{id}/vehicles", "get"},
+      {"/api/admin/invitation-codes", "get"},
+      {"/api/admin/invitation-codes", "post"},
+      {"/api/admin/invitation-codes/{id}", "delete"},
       {"/api/admin/stats", "get"},
   };
 
@@ -144,6 +147,16 @@ void validateOpenApi() {
   require(!paths.isMember("/api/protocol/command") &&
               !paths.isMember("/api/protocol/status"),
           "Removed ROC protocol endpoints must not return to OpenAPI");
+
+  const auto &registerRequest = api["components"]["schemas"]["RegisterRequest"];
+  require(arrayContains(registerRequest["required"], "invitation_code"),
+          "Registration must require an invitation code");
+  const auto &invitationRules =
+      registerRequest["properties"]["invitation_code"]["allOf"];
+  require(invitationRules.isArray() && invitationRules.size() == 3,
+          "Invitation code contract must require length, letters and digits");
+  require(invitationRules[0]["pattern"].asString() == "^[A-Za-z0-9]{5}$",
+          "Invitation code contract must remain five alphanumeric characters");
 
   const auto &artifact =
       paths["/api/device/tasks/{taskId}/artifact"]["get"];

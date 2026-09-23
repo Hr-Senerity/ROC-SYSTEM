@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(roc_backend VERSION 0.1.0 LANGUAGES CXX)
+project(roc_backend VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,8 @@ add_executable(roc-backend-server
   src/utils/InputValidation.h
   src/utils/ImageMetadata.cpp
   src/utils/ImageMetadata.h
+  src/utils/InvitationCode.cpp
+  src/utils/InvitationCode.h
   src/models/User.h
   src/controllers/AuthController.cpp
   src/controllers/AuthController.h
@@ -113,4 +115,12 @@ if(BUILD_TESTING)
   )
   target_link_libraries(api-contract-tests PRIVATE PkgConfig::JSONCPP)
   add_test(NAME api-contract-tests COMMAND api-contract-tests)
+
+  add_executable(invitation-code-tests
+    tests/InvitationCodeTests.cpp
+    src/utils/InvitationCode.cpp
+  )
+  target_include_directories(invitation-code-tests PRIVATE src)
+  target_link_libraries(invitation-code-tests PRIVATE OpenSSL::Crypto)
+  add_test(NAME invitation-code-tests COMMAND invitation-code-tests)
 endif()

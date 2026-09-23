@@ -4,6 +4,9 @@ FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+ARG ROC_VERSION=dev
+ARG ROC_REVISION=unknown
+
 ARG APT_MIRROR=default
 RUN if [ "$APT_MIRROR" = "tsinghua" ]; then \
       sed -i 's|http://.*archive.ubuntu.com|http://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/ubuntu.sources; \
@@ -55,6 +58,12 @@ RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+ARG ROC_VERSION=dev
+ARG ROC_REVISION=unknown
+LABEL org.opencontainers.image.title="ROC-SYSTEM backend" \
+      org.opencontainers.image.version="${ROC_VERSION}" \
+      org.opencontainers.image.revision="${ROC_REVISION}"
 
 ARG APT_MIRROR=default
 RUN if [ "$APT_MIRROR" = "tsinghua" ]; then \

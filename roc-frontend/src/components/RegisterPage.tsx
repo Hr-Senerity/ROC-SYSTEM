@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { CircleAlert, Lock, Mail, User } from 'lucide-react';
+import { CircleAlert, KeyRound, Lock, Mail, User } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/auth/AuthProvider';
+import { isInvitationCodeComplete, normalizeInvitationCodeInput } from '../features/invitations/model';
 import { AuthShell, authErrorMessage } from './AuthShell';
 import { Button } from './ui/button';
 
@@ -12,6 +13,7 @@ export function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [invitationCode, setInvitationCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -21,8 +23,12 @@ export function RegisterPage() {
     event.preventDefault();
     setError('');
 
-    if (!username || !email || !password || !confirmPassword) {
+    if (!username || !email || !password || !confirmPassword || !invitationCode) {
       setError('请填写所有字段');
+      return;
+    }
+    if (!isInvitationCodeComplete(invitationCode)) {
+      setError('邀请码必须是 5 位字符，并同时包含数字和字母');
       return;
     }
     if (password !== confirmPassword) {
@@ -35,7 +41,7 @@ export function RegisterPage() {
     }
 
     setLoading(true);
-    const result = await register(username, email, password);
+    const result = await register(username, email, password, invitationCode);
     setLoading(false);
 
     if (result.ok) {
@@ -49,7 +55,7 @@ export function RegisterPage() {
     <AuthShell
       eyebrow="Create workspace"
       title="创建你的账户"
-      description="公开注册将创建普通用户账户，用于管理你自己的项目、地图与车辆。"
+      description="使用管理员提供的一次性邀请码创建普通用户账户。"
       footer={<><span>已经有账户？</span>{' '}<Link to="/login" className="font-semibold text-[#2f6bff] transition hover:text-[#1f56dd]">返回登录</Link></>}
     >
       {error && (
@@ -62,6 +68,7 @@ export function RegisterPage() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <AuthField id="register-username" label="用户名" type="text" autoComplete="username" value={username} onChange={setUsername} placeholder="为账户设置用户名" icon={User} autoFocus />
         <AuthField id="register-email" label="邮箱" type="email" autoComplete="email" value={email} onChange={setEmail} placeholder="name@example.com" icon={Mail} />
+        <AuthField id="register-invitation-code" label="邀请码" type="text" autoComplete="off" value={invitationCode} onChange={(value) => setInvitationCode(normalizeInvitationCodeInput(value))} placeholder="5 位数字与字母" icon={KeyRound} maxLength={5} />
         <div className="grid gap-4 sm:grid-cols-2">
           <AuthField id="register-password" label="密码" type="password" autoComplete="new-password" value={password} onChange={setPassword} placeholder="至少 6 个字符" icon={Lock} />
           <AuthField id="register-confirm-password" label="确认密码" type="password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} placeholder="再次输入" icon={Lock} />
@@ -85,15 +92,16 @@ interface AuthFieldProps {
   placeholder: string;
   icon: typeof User;
   autoFocus?: boolean;
+  maxLength?: number;
 }
 
-function AuthField({ id, label, type, autoComplete, value, onChange, placeholder, icon: Icon, autoFocus }: AuthFieldProps) {
+function AuthField({ id, label, type, autoComplete, value, onChange, placeholder, icon: Icon, autoFocus, maxLength }: AuthFieldProps) {
   return (
     <div>
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-[#343b49]">{label}</label>
       <div className="relative">
         <Icon className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#8d95a3]" />
-        <input id={id} type={type} autoComplete={autoComplete} value={value} onChange={(event) => onChange(event.target.value)} className={inputClassName} placeholder={placeholder} autoFocus={autoFocus} />
+        <input id={id} type={type} autoComplete={autoComplete} value={value} onChange={(event) => onChange(event.target.value)} className={inputClassName} placeholder={placeholder} autoFocus={autoFocus} maxLength={maxLength} />
       </div>
     </div>
   );

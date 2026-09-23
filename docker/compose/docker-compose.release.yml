@@ -1,0 +1,94 @@
+name: roc-system
+
+services:
+  postgres:
+    image: "roc-system/postgres:${ROC_RELEASE_VERSION:?ROC_RELEASE_VERSION must be set in release.env}"
+    pull_policy: never
+    container_name: roc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-roc_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in release.env}
+      POSTGRES_DB: ${DB_NAME:-roc_db}
+    ports:
+      - "${POSTGRES_DOCKER_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-roc_user} -d ${DB_NAME:-roc_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - roc-net
+
+  backend:
+    image: "roc-system/backend:${ROC_RELEASE_VERSION:?ROC_RELEASE_VERSION must be set in release.env}"
+    pull_policy: never
+    container_name: roc-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BACKEND_LISTEN_HOST: "0.0.0.0"
+      BACKEND_LISTEN_PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-roc_db}
+      DB_USER: ${DB_USER:-roc_user}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in release.env}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      DB_SSLCERT: ${DB_SSLCERT:-}
+      DB_SSLKEY: ${DB_SSLKEY:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in release.env}
+      JWT_EXPIRE_SECONDS: ${JWT_EXPIRE_SECONDS:-86400}
+      WS_ALLOWED_ORIGINS: ${WS_ALLOWED_ORIGINS:-}
+      DEVICE_HEARTBEAT_SECONDS: ${DEVICE_HEARTBEAT_SECONDS:-30}
+      DEVICE_IDLE_TIMEOUT_SECONDS: ${DEVICE_IDLE_TIMEOUT_SECONDS:-45}
+      TASK_LEASE_SECONDS: ${TASK_LEASE_SECONDS:-1800}
+      MAP_STORAGE_DIR: /app/static/maps
+    ports:
+      - "${BACKEND_DOCKER_HOST_PORT:-8080}:8080"
+    volumes:
+      - map_storage:/app/static
+      - ./certs/postgres:/run/secrets/roc-db:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/db/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks:
+      - roc-net
+
+  frontend:
+    image: "roc-system/frontend:${ROC_RELEASE_VERSION:?ROC_RELEASE_VERSION must be set in release.env}"
+    pull_policy: never
+    container_name: roc-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_UPSTREAM: http://backend:8080
+    ports:
+      - "${FRONTEND_DOCKER_HOST_PORT:-3000}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks:
+      - roc-net
+
+volumes:
+  postgres_data:
+    name: ${POSTGRES_DOCKER_VOLUME:?POSTGRES_DOCKER_VOLUME must be set in release.env}
+  map_storage:
+    name: ${BACKEND_MAP_VOLUME:?BACKEND_MAP_VOLUME must be set in release.env}
+
+networks:
+  roc-net:
+    name: roc-net
+    driver: bridge
