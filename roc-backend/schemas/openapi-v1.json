@@ -208,15 +208,30 @@
       "post": {
         "operationId": "uploadProjectMap",
         "tags": ["Maps"],
-        "summary": "Upload a PNG/JPEG map and create immutable artifact v1",
+        "summary": "Import an image or paired PGM+YAML map and create immutable preview artifact v1",
         "requestBody": {
           "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "type": "object",
-                "required": ["name", "image"],
-                "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 128 }, "image": { "type": "string", "contentEncoding": "binary" } }
+                "required": ["name", "source_type"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "source_type": { "enum": ["image", "pgm-yaml"] },
+                  "coordinate_mode": { "enum": ["legacy-normalized", "metric"] },
+                  "resolution": { "type": "number", "exclusiveMinimum": 0 },
+                  "origin_x": { "type": "number" },
+                  "origin_y": { "type": "number" },
+                  "origin_theta": { "type": "number" },
+                  "image": { "type": "string", "contentEncoding": "binary" },
+                  "pgm": { "type": "string", "contentEncoding": "binary" },
+                  "yaml": { "type": "string", "contentEncoding": "binary" }
+                },
+                "anyOf": [
+                  { "required": ["image"] },
+                  { "required": ["pgm", "yaml"] }
+                ]
               }
             }
           }
@@ -364,7 +379,7 @@
         "operationId": "acceptDeviceTask",
         "tags": ["Device tasks"],
         "summary": "Accept a task and receive or replay its lease",
-        "security": [{ "deviceBearer": [] }],
+        "security": [{ "deviceAuthorization": [] }],
         "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
       }
     },
@@ -374,7 +389,7 @@
         "operationId": "getDeviceTaskManifest",
         "tags": ["Device tasks"],
         "summary": "Read the immutable resource manifest",
-        "security": [{ "deviceBearer": [] }],
+        "security": [{ "deviceAuthorization": [] }],
         "responses": {
           "200": { "description": "Manifest", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/manifestResponse" } } } },
           "401": { "$ref": "#/components/responses/Error" },
@@ -390,7 +405,7 @@
         "tags": ["Device tasks"],
         "summary": "Download a full road JSON or original map image",
         "description": "Range requests are intentionally rejected with 416; clients must download the complete immutable artifact and verify X-Content-SHA256.",
-        "security": [{ "deviceBearer": [] }],
+        "security": [{ "deviceAuthorization": [] }],
         "responses": {
           "200": { "description": "Complete immutable artifact", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, "content": { "application/vnd.roc.road-network+json": { "schema": { "$ref": "./road-network-v1.schema.json" } }, "image/png": { "schema": { "type": "string", "contentEncoding": "binary" } }, "image/jpeg": { "schema": { "type": "string", "contentEncoding": "binary" } } } },
           "401": { "$ref": "#/components/responses/Error" },
@@ -406,7 +421,7 @@
         "operationId": "updateDeviceTaskStatus",
         "tags": ["Device tasks"],
         "summary": "Idempotently report download or delivery status",
-        "security": [{ "deviceBearer": [] }],
+        "security": [{ "deviceAuthorization": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/statusRequest" } } } },
         "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
       }
@@ -500,7 +515,7 @@
   "components": {
     "securitySchemes": {
       "accountBearer": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Account JWT returned by login or registration." },
-      "deviceBearer": { "type": "http", "scheme": "bearer", "description": "Per-vehicle Device token returned once when issued or rotated." }
+      "deviceAuthorization": { "type": "apiKey", "in": "header", "name": "Authorization", "description": "Exact value: Device <DEVICE_TOKEN>. This is not an HTTP Bearer credential." }
     },
     "parameters": {
       "Id": { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } },

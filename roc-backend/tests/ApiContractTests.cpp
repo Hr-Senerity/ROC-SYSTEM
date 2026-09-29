@@ -73,8 +73,15 @@ void validateOpenApi() {
           "OpenAPI version must be 3.1.0");
   require(api["components"]["securitySchemes"].isMember("accountBearer"),
           "OpenAPI is missing accountBearer");
-  require(api["components"]["securitySchemes"].isMember("deviceBearer"),
-          "OpenAPI is missing deviceBearer");
+  const auto &deviceAuthorization =
+      api["components"]["securitySchemes"]["deviceAuthorization"];
+  require(deviceAuthorization["type"].asString() == "apiKey" &&
+              deviceAuthorization["in"].asString() == "header" &&
+              deviceAuthorization["name"].asString() == "Authorization",
+          "OpenAPI must model Device authentication as the explicit Authorization header");
+  require(deviceAuthorization["description"].asString().find("Device <DEVICE_TOKEN>") !=
+              std::string::npos,
+          "OpenAPI must document the exact Device token prefix");
 
   const std::vector<std::pair<std::string, std::string>> expectedOperations{
       {"/api/health", "get"},
@@ -163,7 +170,7 @@ void validateOpenApi() {
   require(artifact["responses"].isMember("416"),
           "Full-download-only artifact policy must document HTTP 416");
   require(artifact["security"].isArray() &&
-              artifact["security"][0].isMember("deviceBearer"),
+              artifact["security"][0].isMember("deviceAuthorization"),
           "Device artifact download must use Device token security");
 }
 

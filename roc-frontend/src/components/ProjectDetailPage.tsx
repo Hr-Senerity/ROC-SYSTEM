@@ -118,6 +118,9 @@ export function ProjectDetailPage() {
                 <div className="min-w-0">
                   <Link to={`/projects/${projectId}/maps/${map.id}/monitor`} className="block truncate font-semibold text-slate-950 hover:text-blue-700 hover:underline">{map.name}</Link>
                   <p className="mt-1 text-xs text-slate-500">上传于 {new Date(map.createdAt).toLocaleDateString('zh-CN')}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {map.sourceType === 'pgm-yaml' ? 'PGM + YAML · 自动米制标定' : map.coordinateMode === 'metric' ? '图片 · 人工米制标定' : '图片 · 未标定'}
+                  </p>
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

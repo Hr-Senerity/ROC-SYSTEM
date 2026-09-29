@@ -12,6 +12,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(PQXX REQUIRED IMPORTED_TARGET libpqxx)
 pkg_check_modules(JSONCPP REQUIRED IMPORTED_TARGET jsoncpp)
 find_package(OpenSSL REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(ZLIB REQUIRED)
 
 add_executable(roc-backend-server
   src/main.cpp
@@ -28,6 +30,8 @@ add_executable(roc-backend-server
   src/utils/InputValidation.h
   src/utils/ImageMetadata.cpp
   src/utils/ImageMetadata.h
+  src/utils/MapImport.cpp
+  src/utils/MapImport.h
   src/utils/InvitationCode.cpp
   src/utils/InvitationCode.h
   src/models/User.h
@@ -69,6 +73,8 @@ target_link_libraries(roc-backend-server PRIVATE
   PkgConfig::JSONCPP
   OpenSSL::SSL
   OpenSSL::Crypto
+  yaml-cpp
+  ZLIB::ZLIB
 )
 
 if(BUILD_TESTING)
@@ -94,6 +100,15 @@ if(BUILD_TESTING)
   )
   target_include_directories(image-metadata-tests PRIVATE src)
   add_test(NAME image-metadata-tests COMMAND image-metadata-tests)
+
+  add_executable(map-import-tests
+    tests/MapImportTests.cpp
+    src/utils/MapImport.cpp
+    src/utils/ImageMetadata.cpp
+  )
+  target_include_directories(map-import-tests PRIVATE src)
+  target_link_libraries(map-import-tests PRIVATE yaml-cpp ZLIB::ZLIB)
+  add_test(NAME map-import-tests COMMAND map-import-tests)
 
   add_executable(postgres-config-tests
     tests/PostgresConfigTests.cpp

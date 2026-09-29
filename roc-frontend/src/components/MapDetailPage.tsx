@@ -209,7 +209,7 @@ export function MapDetailPage() {
       <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4">
         <div className="flex min-w-0 items-center gap-3">
           <Button variant="ghost" size="icon" asChild><Link to={`/projects/${projectId}/maps`} aria-label="返回项目地图"><ArrowLeft /></Link></Button>
-          <div className="min-w-0"><h1 className="truncate font-semibold text-slate-950">{map.name}</h1><p className="text-xs text-slate-500">地图监控 · {map.coordinateMode === 'metric' ? '米制坐标' : '旧版归一化坐标'}</p></div>
+          <div className="min-w-0"><h1 className="truncate font-semibold text-slate-950">{map.name}</h1><p className="text-xs text-slate-500">地图监控 · {map.coordinateMode === 'metric' ? '米制坐标' : '旧版归一化坐标'} · {map.sourceType === 'pgm-yaml' ? 'PGM + YAML' : '图片'}</p></div>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500"><RefreshCw className={`size-3.5 ${connectionState === 'connecting' ? 'animate-spin' : ''}`} /><span className="hidden sm:inline">{connectionState === 'live' ? '实时更新' : connectionState === 'connecting' ? '正在连接' : '轮询保障'} · </span>{updatedAt?.toLocaleTimeString('zh-CN') || '尚未收到车辆数据'}</div>
       </header>

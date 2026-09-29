@@ -84,9 +84,9 @@ ROC-SYSTEM/
 │       └── release.env.example      # release 运行配置模板
 ├── postgres/
 │   ├── init/init.sql                # 全新数据库完整 Schema
-│   └── migrations/                  # 001–009 增量迁移
+│   └── migrations/                  # 001–010 增量迁移
 ├── roc-backend/
-│   ├── CMakeLists.txt               # C++17 · Drogon · libpqxx · OpenSSL · jsoncpp
+│   ├── CMakeLists.txt               # C++17 · Drogon · libpqxx · OpenSSL · jsoncpp · yaml-cpp · zlib
 │   ├── schemas/                     # OpenAPI 3.1 与三个 JSON Schema
 │   ├── tests/                       # 协议、配置、图片、路网、邀请码及合同测试
 │   └── src/
@@ -295,17 +295,22 @@ Vehicle opens /ws/device with a per-vehicle Device token
 ### 地图制品上传与下发流
 
 ```
-multipart/form-data 上传 PNG/JPEG 原图（name + image，最大 30 MiB；中文显示名/原始文件名使用安全英文传输名）
-  → 后端校验真实文件签名与图片尺寸 → 临时文件原子移动
+multipart/form-data 选择三种入口：
+  ├── 普通 PNG/JPEG（旧版归一化坐标）
+  ├── PNG/JPEG + 人工 resolution/origin/yaw（米制坐标）
+  └── 成对 PGM+YAML（含 Cartographer 导出的标准 PGM+YAML，自动读取米制参数）
+  → 后端校验图片签名或 P2/P5 PGM、YAML 路径/原点/阈值/有限数/像素上限
+  → PGM 安全生成 PNG 浏览器预览，并保留原始 PGM、YAML 及各自 SHA-256
+  → 所有文件先写临时文件再原子移动
   → 同一事务创建 maps 记录和 map_artifacts v1
-    → 记录 MIME、像素尺寸、字节数、SHA-256 与不可变存储键
+    → 记录来源类型、坐标元数据、MIME、像素尺寸、字节数、SHA-256 与不可变存储键
   → 地图卡片“下发地图” → 选择项目车辆并二次确认
   → 复用持久部署批次、Device token、租约、manifest 和制品下载接口
-  → 车端按 SHA-256 校验原始图片并保存或交给受控本地适配器
+  → 车端按 SHA-256 校验当前地图制品并保存或交给受控本地适配器
   → 仅在车端回报 delivered 后更新 delivered_map_artifact_id
 ```
 
-旧地图可通过制品接口将当前受保护原图固化为 v1；同一 SHA-256 重复调用保持幂等。地图删除会同时清理未被引用的路网版本、制品元数据和文件；一旦版本进入部署历史或被车辆确认为已送达，删除返回 409，以免破坏审计链。平台不转码，也不声称车辆已加载或应用地图。
+旧地图可通过制品接口将当前受保护原图固化为 v1；同一 SHA-256 重复调用保持幂等。PGM+YAML 首轮以派生 PNG 作为浏览器预览和既有单文件地图制品，原始双文件保持可追溯但不会在 T18 中暗改为新的车端双文件协议。地图删除会同时清理未被引用的路网版本、制品元数据、预览图和原始来源文件；一旦版本进入部署历史或被车辆确认为已送达，删除返回 409，以免破坏审计链。平台不声称车辆已加载或应用地图。
 
 ### 地图可视化 — 统一 SVG 坐标空间
 
@@ -414,7 +419,7 @@ graph TB
 | `/api/projects/{id}/maps` | GET | Bearer | 已授权项目的地图列表 |
 | `/api/projects/{pid}/maps/{mid}` | GET | Bearer | 读取单张地图及坐标元数据 |
 | `/api/projects/{pid}/maps/{mid}/image` | GET | Bearer | 校验项目归属后读取地图图片；不提供匿名 `/static` 回退 |
-| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 上传（`name` + `image`）；PNG/JPEG，最大 30 MiB，显示名支持中文，并自动创建不可变 v1 制品 |
+| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 导入普通/人工标定 PNG/JPEG，或成对 PGM+YAML；Cartographer 先输出 PGM+YAML 后复用同一入口；自动创建不可变预览 v1 制品 |
 | `/api/projects/{pid}/default-map` | PUT | Bearer | 原子设置项目默认地图 |
 | `/api/projects/{pid}/maps/{mid}` | PATCH | Bearer | 更新地图信息 |
 | `/api/projects/{pid}/maps/{mid}` | DELETE | Bearer | 删除无车辆绑定且无交付历史的地图，并清理未引用制品文件 |

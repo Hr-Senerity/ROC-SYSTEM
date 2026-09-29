@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   mapNameFromFileName,
   mapUploadTransportName,
+  validateManualCalibration,
+  validateMapYamlFile,
   validateMapImageFile,
+  validatePgmFile,
 } from './upload';
 
 describe('map image upload model', () => {
@@ -17,6 +20,24 @@ describe('map image upload model', () => {
       type: 'image/png',
       size: 4_962_454,
     })).toBeNull();
+  });
+
+  it('validates paired PGM and YAML sources', () => {
+    expect(validatePgmFile({ name: 'warehouse.PGM', type: '', size: 2048 })).toBeNull();
+    expect(validateMapYamlFile({ name: 'warehouse.yaml', type: '', size: 1024 })).toBeNull();
+    expect(validatePgmFile({ name: 'warehouse.png', type: 'image/png', size: 2048 }))
+      .toContain('.pgm');
+    expect(validateMapYamlFile({ name: 'warehouse.txt', type: '', size: 1024 }))
+      .toContain('.yaml');
+  });
+
+  it('requires finite manual metric calibration values', () => {
+    expect(validateManualCalibration({ resolution: '0.05', originX: '-10', originY: '-20', originTheta: '0' }))
+      .toBeNull();
+    expect(validateManualCalibration({ resolution: '0', originX: '0', originY: '0', originTheta: '0' }))
+      .toContain('分辨率');
+    expect(validateManualCalibration({ resolution: '0.05', originX: 'NaN', originY: '0', originTheta: '0' }))
+      .toContain('原点');
   });
 
   it('keeps the Unicode display name but uses a safe transport filename', () => {

@@ -86,6 +86,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmariadb3 \
     libbrotli1 \
     libhiredis1.1.0 \
+    libyaml-cpp0.8 \
     # Drogon 和 libpqxx 运行时库
     libdrogon-dev \
     libpqxx-dev \

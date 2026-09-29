@@ -3,6 +3,7 @@
 #include <drogon/drogon.h>
 #include <drogon/MultiPart.h>
 #include <json/json.h>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -17,6 +18,7 @@
 #include "utils/ImageMetadata.h"
 #include "utils/InputValidation.h"
 #include "utils/JwtHelper.h"
+#include "utils/MapImport.h"
 #include "utils/PasswordHash.h"
 
 namespace roc::controller {
@@ -26,6 +28,7 @@ using namespace drogon;
 namespace {
 
 constexpr std::size_t kMaxMapImageBytes = 30 * 1024 * 1024;
+constexpr std::size_t kMaxMapYamlBytes = 1024 * 1024;
 
 Json::Value makeResp(bool ok, const std::string &msg = "") {
   Json::Value v;
@@ -89,7 +92,7 @@ constexpr const char *kMapColumns =
     "'/maps/' || id::text || '/image' END AS image_url, "
     "is_active, coordinate_origin_x, "
     "coordinate_origin_y, coordinate_mode, image_width, image_height, "
-    "resolution, origin_theta, road_network, created_at";
+    "resolution, origin_theta, road_network, source_type, source_metadata, created_at";
 
 std::string randomUploadSuffix() {
   std::random_device device;
@@ -97,6 +100,20 @@ std::string randomUploadSuffix() {
   std::ostringstream value;
   value << std::hex << engine();
   return value.str();
+}
+
+template <typename Parameters>
+bool finiteParameter(const Parameters &parameters, const std::string &name,
+                     double &value) {
+  const auto found = parameters.find(name);
+  if (found == parameters.end() || found->second.empty()) return false;
+  try {
+    std::size_t parsed = 0;
+    value = std::stod(found->second, &parsed);
+    return parsed == found->second.size() && std::isfinite(value);
+  } catch (...) {
+    return false;
+  }
 }
 
 }  // namespace
@@ -342,8 +359,13 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
             }
           };
           const auto mapFiles = tx.exec_params(
-              "SELECT image_url FROM maps WHERE project_id = $1::uuid", projId);
-          for (const auto &map : mapFiles) rememberFile(map[0]);
+              "SELECT image_url, source_pgm_storage_key, source_yaml_storage_key "
+              "FROM maps WHERE project_id = $1::uuid", projId);
+          for (const auto &map : mapFiles) {
+            rememberFile(map[0]);
+            rememberFile(map[1]);
+            rememberFile(map[2]);
+          }
           const auto artifactFiles = tx.exec_params(
               "SELECT artifact.storage_key FROM map_artifacts artifact "
               "JOIN maps map ON map.id = artifact.map_id "
@@ -505,7 +527,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
       },
       {Get, Options});
 
-  // POST /api/projects/{id}/maps/upload — multipart image upload
+  // POST /api/projects/{id}/maps/upload — image or PGM+YAML map import
   app().registerHandler(
       "/api/projects/{id}/maps/upload",
       [connStr, jwtSecret, mapStorageDirectory](const HttpRequestPtr &req,
@@ -517,13 +539,12 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
         MultiPartParser parser;
         if (parser.parse(req) != 0) {
           cb(jsonResp(k400BadRequest, makeResp(
-              false, "multipart/form-data with name and image fields is required")));
+              false, "multipart/form-data map upload is required")));
           return;
         }
         const auto &parameters = parser.getParameters();
         const auto name = parameters.find("name");
         const auto files = parser.getFilesMap();
-        const auto file = files.find("image");
         if (name == parameters.end() || name->second.empty()) {
           cb(jsonResp(k400BadRequest, makeResp(false, "name is required")));
           return;
@@ -532,28 +553,128 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           cb(jsonResp(k400BadRequest, makeResp(false, "name is too long")));
           return;
         }
-        if (file == files.end() || file->second.fileLength() == 0) {
-          cb(jsonResp(k400BadRequest, makeResp(false, "image is required")));
-          return;
-        }
-        if (file->second.fileLength() > kMaxMapImageBytes) {
-          cb(jsonResp(k413RequestEntityTooLarge,
-                      makeResp(false, "Image exceeds the 30 MiB upload limit")));
-          return;
-        }
         const std::string mapName = name->second;
-        const auto content = file->second.fileContent();
-        std::string raw(content.data(), content.size());
-        const auto image = roc::utils::inspectImage(raw);
-        if (!image) {
-          cb(jsonResp(k400BadRequest, makeResp(false, "Only PNG and JPEG images are supported")));
+        const auto sourceTypeIt = parameters.find("source_type");
+        const auto sourceType = sourceTypeIt == parameters.end() ? std::string{"image"}
+                                                                  : sourceTypeIt->second;
+        if (sourceType != "image" && sourceType != "pgm-yaml") {
+          cb(jsonResp(k400BadRequest, makeResp(false, "source_type must be image or pgm-yaml")));
           return;
         }
-        std::string fn = "map_" + projId.substr(0, 8) + "_" + randomUploadSuffix() + image->extension;
-        std::string savedPath = "/static/maps/" + fn;
+
+        std::string previewBytes;
+        std::string previewExtension;
+        std::string previewContentType;
+        std::string pgmBytes;
+        std::string yamlBytes;
+        std::string coordinateMode{"legacy-normalized"};
+        std::string sourceMetadata{"{}"};
+        int imageWidth = 0;
+        int imageHeight = 0;
+        double resolution = 0;
+        double originX = 0;
+        double originY = 0;
+        double originTheta = 0;
+        bool hasMetricCoordinates = false;
+
+        if (sourceType == "image") {
+          const auto file = files.find("image");
+          if (file == files.end() || file->second.fileLength() == 0) {
+            cb(jsonResp(k400BadRequest, makeResp(false, "image is required")));
+            return;
+          }
+          if (file->second.fileLength() > kMaxMapImageBytes) {
+            cb(jsonResp(k413RequestEntityTooLarge,
+                        makeResp(false, "Image exceeds the 30 MiB upload limit")));
+            return;
+          }
+          const auto content = file->second.fileContent();
+          previewBytes.assign(content.data(), content.size());
+          const auto image = roc::utils::inspectImage(previewBytes);
+          if (!image) {
+            cb(jsonResp(k400BadRequest,
+                        makeResp(false, "Only valid PNG and JPEG images are supported")));
+            return;
+          }
+          previewExtension = image->extension;
+          previewContentType = image->contentType;
+          imageWidth = image->width;
+          imageHeight = image->height;
+          const auto mode = parameters.find("coordinate_mode");
+          coordinateMode = mode == parameters.end() ? "legacy-normalized" : mode->second;
+          if (coordinateMode != "legacy-normalized" && coordinateMode != "metric") {
+            cb(jsonResp(k400BadRequest,
+                        makeResp(false, "coordinate_mode must be legacy-normalized or metric")));
+            return;
+          }
+          if (coordinateMode == "metric") {
+            if (!finiteParameter(parameters, "resolution", resolution) || resolution <= 0 ||
+                !finiteParameter(parameters, "origin_x", originX) ||
+                !finiteParameter(parameters, "origin_y", originY) ||
+                !finiteParameter(parameters, "origin_theta", originTheta)) {
+              cb(jsonResp(k400BadRequest, makeResp(
+                  false, "Metric images require a positive resolution and finite origin_x, origin_y, origin_theta")));
+              return;
+            }
+            hasMetricCoordinates = true;
+            sourceMetadata = "{\"calibration\":\"manual\"}";
+          }
+        } else {
+          const auto pgmFile = files.find("pgm");
+          const auto yamlFile = files.find("yaml");
+          if (pgmFile == files.end() || yamlFile == files.end() ||
+              pgmFile->second.fileLength() == 0 || yamlFile->second.fileLength() == 0) {
+            cb(jsonResp(k400BadRequest,
+                        makeResp(false, "pgm and yaml files are both required")));
+            return;
+          }
+          if (pgmFile->second.fileLength() > kMaxMapImageBytes ||
+              yamlFile->second.fileLength() > kMaxMapYamlBytes) {
+            cb(jsonResp(k413RequestEntityTooLarge, makeResp(
+                false, "PGM exceeds 30 MiB or YAML exceeds 1 MiB")));
+            return;
+          }
+          const auto pgmContent = pgmFile->second.fileContent();
+          const auto yamlContent = yamlFile->second.fileContent();
+          pgmBytes.assign(pgmContent.data(), pgmContent.size());
+          yamlBytes.assign(yamlContent.data(), yamlContent.size());
+          const auto imported = roc::utils::parseRosMapSource(pgmBytes, yamlBytes);
+          if (!imported.value) {
+            cb(jsonResp(k400BadRequest, makeResp(false, imported.error)));
+            return;
+          }
+          const auto &map = *imported.value;
+          previewBytes = map.previewPng;
+          previewExtension = ".png";
+          previewContentType = "image/png";
+          imageWidth = map.width;
+          imageHeight = map.height;
+          coordinateMode = "metric";
+          resolution = map.resolution;
+          originX = map.originX;
+          originY = map.originY;
+          originTheta = map.originTheta;
+          hasMetricCoordinates = true;
+          Json::Value metadata;
+          metadata["image"] = map.imageReference;
+          metadata["negate"] = map.negate;
+          metadata["occupied_thresh"] = map.occupiedThreshold;
+          metadata["free_thresh"] = map.freeThreshold;
+          metadata["mode"] = map.mode;
+          Json::StreamWriterBuilder writer;
+          writer["indentation"] = "";
+          sourceMetadata = Json::writeString(writer, metadata);
+        }
+
+        const auto uploadId = randomUploadSuffix();
+        const auto baseName = "map_" + projId.substr(0, 8) + "_" + uploadId;
+        const auto previewName = baseName + previewExtension;
+        const auto pgmName = sourceType == "pgm-yaml" ? baseName + ".source.pgm" : std::string{};
+        const auto yamlName = sourceType == "pgm-yaml" ? baseName + ".source.yaml" : std::string{};
+        const std::string savedPath = "/static/maps/" + previewName;
         const auto d = mapStorageDirectory;
-        const auto diskPath = std::filesystem::path(d) / fn;
-        const auto temporaryPath = std::filesystem::path(d) / (fn + ".part-" + randomUploadSuffix());
+        std::vector<std::filesystem::path> savedFiles;
+        std::vector<std::filesystem::path> temporaryFiles;
         try {
           roc::db::PostgresClient pg(connStr);
           const auto access = checkProjectAccess(
@@ -563,20 +684,24 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           std::error_code ec;
           std::filesystem::create_directories(d, ec);
           if (ec) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to create upload directory"))); return; }
-          std::ofstream ofs(temporaryPath, std::ios::binary);
-          if (!ofs) { cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file"))); return; }
-          ofs.write(raw.data(), static_cast<std::streamsize>(raw.size()));
-          ofs.close();
-          if (!ofs) {
-            std::filesystem::remove(temporaryPath, ec);
-            cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to write file")));
-            return;
-          }
-          std::filesystem::rename(temporaryPath, diskPath, ec);
-          if (ec) {
-            std::filesystem::remove(temporaryPath, ec);
-            cb(jsonResp(k500InternalServerError, makeResp(false, "Failed to finalize file")));
-            return;
+          const auto storeFile = [&](const std::string &fileName, const std::string &bytes) {
+            const auto finalPath = std::filesystem::path(d) / fileName;
+            const auto temporaryPath = std::filesystem::path(d) /
+                (fileName + ".part-" + randomUploadSuffix());
+            temporaryFiles.push_back(temporaryPath);
+            std::ofstream output(temporaryPath, std::ios::binary);
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            output.close();
+            if (!output) throw std::runtime_error("Failed to write map source file");
+            std::filesystem::rename(temporaryPath, finalPath, ec);
+            if (ec) throw std::runtime_error("Failed to finalize map source file");
+            temporaryFiles.pop_back();
+            savedFiles.push_back(finalPath);
+          };
+          storeFile(previewName, previewBytes);
+          if (sourceType == "pgm-yaml") {
+            storeFile(pgmName, pgmBytes);
+            storeFile(yamlName, yamlBytes);
           }
 
           std::string mid;
@@ -584,21 +709,43 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
             pqxx::connection connection(connStr);
             pqxx::work tx(connection);
             const auto inserted = tx.exec_params(
-                "INSERT INTO maps (project_id, name, image_url, image_width, image_height) "
-                "VALUES ($1::uuid, $2, $3, $4, $5) RETURNING id::text",
-                projId, mapName, savedPath, image->width, image->height);
+                "INSERT INTO maps "
+                "(project_id, name, image_url, image_width, image_height, coordinate_mode, "
+                "resolution, coordinate_origin_x, coordinate_origin_y, origin_theta, source_type, "
+                "source_pgm_storage_key, source_yaml_storage_key, source_pgm_sha256, "
+                "source_yaml_sha256, source_metadata) VALUES "
+                "($1::uuid, $2, $3, $4, $5, $6, NULLIF($7, '')::double precision, "
+                "NULLIF($8, '')::double precision, NULLIF($9, '')::double precision, "
+                "$10::double precision, $11, NULLIF($12, ''), NULLIF($13, ''), "
+                "NULLIF($14, ''), NULLIF($15, ''), $16::jsonb) RETURNING id::text",
+                projId, mapName, savedPath, imageWidth, imageHeight, coordinateMode,
+                hasMetricCoordinates ? std::to_string(resolution) : std::string{},
+                hasMetricCoordinates ? std::to_string(originX) : std::string{},
+                hasMetricCoordinates ? std::to_string(originY) : std::string{},
+                std::to_string(originTheta),
+                sourceType, pgmName, yamlName,
+                sourceType == "pgm-yaml" ? roc::utils::sha256Hex(pgmBytes) : std::string{},
+                sourceType == "pgm-yaml" ? roc::utils::sha256Hex(yamlBytes) : std::string{},
+                sourceMetadata);
             mid = inserted[0][0].as<std::string>();
             tx.exec_params(
                 "INSERT INTO map_artifacts "
-                "(map_id, version, storage_key, content_type, byte_size, sha256, "
-                "image_width, image_height, created_by) "
-                "VALUES ($1::uuid, 1, $2, $3, $4, $5, $6, $7, $8::uuid)",
-                mid, fn, image->contentType, static_cast<long long>(raw.size()),
-                roc::utils::sha256Hex(raw), image->width, image->height,
+                "(map_id, version, storage_key, content_type, byte_size, sha256, image_width, "
+                "image_height, resolution, origin_x, origin_y, origin_theta, created_by) VALUES "
+                "($1::uuid, 1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::double precision, "
+                "NULLIF($9, '')::double precision, NULLIF($10, '')::double precision, "
+                "NULLIF($11, '')::double precision, $12::uuid)",
+                mid, previewName, previewContentType,
+                static_cast<long long>(previewBytes.size()),
+                roc::utils::sha256Hex(previewBytes), imageWidth, imageHeight,
+                hasMetricCoordinates ? std::to_string(resolution) : std::string{},
+                hasMetricCoordinates ? std::to_string(originX) : std::string{},
+                hasMetricCoordinates ? std::to_string(originY) : std::string{},
+                hasMetricCoordinates ? std::to_string(originTheta) : std::string{},
                 (*p)["user_id"].asString());
             tx.commit();
           } catch (...) {
-            std::filesystem::remove(diskPath, ec);
+            for (const auto &path : savedFiles) std::filesystem::remove(path, ec);
             throw;
           }
           auto m = pg.queryOneParams(
@@ -606,7 +753,13 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
               {mid});
           Json::Value resp; resp["ok"] = true; resp["map"] = m;
           cb(jsonResp(k201Created, resp));
-        } catch (const std::exception &e) { LOG_ERROR << "Upload: " << e.what(); cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error"))); }
+        } catch (const std::exception &e) {
+          std::error_code ignored;
+          for (const auto &path : temporaryFiles) std::filesystem::remove(path, ignored);
+          for (const auto &path : savedFiles) std::filesystem::remove(path, ignored);
+          LOG_ERROR << "Upload: " << e.what();
+          cb(jsonResp(k500InternalServerError, makeResp(false, "Internal error")));
+        }
       }, {Post, Options});
 
   // PUT /api/projects/{pid}/default-map — atomically switch the default map
@@ -750,7 +903,7 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           pqxx::connection connection(connStr);
           pqxx::work tx(connection);
           const auto map = tx.exec_params(
-              "SELECT image_url FROM maps "
+              "SELECT image_url, source_pgm_storage_key, source_yaml_storage_key FROM maps "
               "WHERE id = $1::uuid AND project_id = $2::uuid FOR UPDATE",
               mapId, projId);
           if (map.empty()) {
@@ -783,10 +936,12 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
           for (const auto &artifact : artifacts) {
             storedFiles.push_back(artifact[0].as<std::string>());
           }
-          const auto imagePath = map[0][0].as<std::string>();
-          if (imagePath.rfind("/static/maps/", 0) == 0 &&
-              imagePath.find("..") == std::string::npos) {
-            storedFiles.push_back(std::filesystem::path(imagePath).filename().string());
+          for (std::size_t column = 0; column < 3; ++column) {
+            if (map[0][column].is_null()) continue;
+            const auto storedPath = map[0][column].as<std::string>();
+            if (!storedPath.empty() && storedPath.find("..") == std::string::npos) {
+              storedFiles.push_back(std::filesystem::path(storedPath).filename().string());
+            }
           }
           tx.exec_params("DELETE FROM road_network_revisions WHERE map_id = $1::uuid", mapId);
           tx.exec_params("DELETE FROM map_artifacts WHERE map_id = $1::uuid", mapId);

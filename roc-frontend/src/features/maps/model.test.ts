@@ -18,4 +18,21 @@ describe('map DTO parsing', () => {
   it('rejects unknown boolean encodings', () => {
     expect(() => parseBoolean('yes')).toThrow('布尔字段格式不正确');
   });
+
+  it('parses PGM+YAML source metadata while keeping old rows compatible', () => {
+    const imported = parseProjectMap({
+      id: 'map-2', project_id: 'project-1', name: 'ROS 地图', image_url: '/image',
+      is_active: false, created_at: '2026-09-29T00:00:00Z', coordinate_mode: 'metric',
+      source_type: 'pgm-yaml', source_metadata: '{"mode":"trinary"}',
+    });
+    expect(imported.sourceType).toBe('pgm-yaml');
+    expect(imported.sourceMetadata.mode).toBe('trinary');
+
+    const legacy = parseProjectMap({
+      id: 'map-3', project_id: 'project-1', name: '旧地图', image_url: null,
+      is_active: false, created_at: '2026-09-29T00:00:00Z',
+    });
+    expect(legacy.sourceType).toBe('image');
+    expect(legacy.sourceMetadata).toEqual({});
+  });
 });

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../app/auth/AuthProvider';
 import { useProjectVehicles } from '../app/realtime/VehicleRealtimeProvider';
 import { parseProjectMapList, type ProjectMap } from '../features/maps/model';
+import { describeDeviceCredential } from '../features/vehicles/deviceCredentials';
 import { parseVehicle, type Vehicle, type VehicleStatus } from '../features/vehicles/model';
 import { apiRequest } from '../shared/api/client';
 import { isAbortError } from '../shared/api/errors';
@@ -321,7 +322,7 @@ export function PerformanceMonitor({ projectId }: PerformanceMonitorProps) {
 
       <Dialog open={Boolean(credentialVehicle)} onOpenChange={(open) => { if (!open && !credentialLoading) { setCredentialVehicle(null); setCredentialStatus(null); setCredentialError(''); } }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>设备接入凭据</DialogTitle><DialogDescription>为“{credentialVehicle?.name}”生成独立凭据。设备上报时必须同时使用该车辆 ID，凭据仅在生成后显示一次。</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>设备接入凭据</DialogTitle><DialogDescription>{describeDeviceCredential(credentialVehicle?.name)}</DialogDescription></DialogHeader>
           <div className="space-y-4">
             {credentialError && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{credentialError}</p>}
             {credentialLoading && !credentialStatus ? <p className="text-sm text-slate-500">正在读取凭据状态…</p> : (

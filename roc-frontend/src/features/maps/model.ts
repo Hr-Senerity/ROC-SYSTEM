@@ -13,6 +13,8 @@ export interface ProjectMap {
   imageHeight: number | null;
   resolution: number | null;
   originTheta: number;
+  sourceType: 'image' | 'pgm-yaml';
+  sourceMetadata: Record<string, unknown>;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -43,6 +45,13 @@ function parseJson(value: unknown): unknown {
   try { return JSON.parse(value) as unknown; } catch { return null; }
 }
 
+function parseRecord(value: unknown): Record<string, unknown> {
+  const parsed = parseJson(value);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+}
+
 export function parseProjectMap(value: unknown): ProjectMap {
   const source = record(value);
   return {
@@ -60,6 +69,8 @@ export function parseProjectMap(value: unknown): ProjectMap {
     imageHeight: nullableNumber(source.image_height),
     resolution: nullableNumber(source.resolution),
     originTheta: nullableNumber(source.origin_theta) ?? 0,
+    sourceType: source.source_type === 'pgm-yaml' ? 'pgm-yaml' : 'image',
+    sourceMetadata: parseRecord(source.source_metadata),
   };
 }
 

@@ -8,6 +8,20 @@
 并且本项目遵循 语义化版本 <https://semver.org/lang/zh-CN/>_。
 
 ==========
+[Unreleased]
+==========
+
+新增
+----
+- 地图上传增加普通图片、人工米制标定图片和成对 PGM+YAML 三种入口；Cartographer 导出的标准 PGM+YAML 复用同一流程。
+- 后端严格解析 P2/P5 PGM 与 ROS 地图 YAML，校验相对 ``image`` 路径、分辨率、原点、阈值、编码和像素上限，生成浏览器 PNG 预览，并通过迁移 ``010_map_sources.sql`` 保存原始来源键、SHA-256 与标准化元数据。
+
+变更
+----
+- OpenAPI 将车端鉴权从易误导的 HTTP Bearer 定义改为显式 ``Authorization`` apiKey，并固定请求头值为 ``Device <DEVICE_TOKEN>``。
+- 车辆接入凭据弹窗明确 Device Token 已唯一映射车辆；车辆 ID 由 ``hello.payload.vehicle_id`` 返回，上行 heartbeat/telemetry 正文不得重复声明车辆身份。
+
+==========
 [0.2.1] - 2026-09-24
 ==========
 

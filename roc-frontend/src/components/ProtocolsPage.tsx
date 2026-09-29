@@ -20,7 +20,7 @@ const taskEndpoints = [
 ] as const;
 
 const accountTaskEndpoints = [
-  { method: 'POST', path: '/api/projects/{project_id}/maps/upload', purpose: 'multipart 上传 name + PNG/JPEG image，并自动创建不可变地图 v1 制品' },
+  { method: 'POST', path: '/api/projects/{project_id}/maps/upload', purpose: 'multipart 导入普通/人工标定 PNG/JPEG，或成对 PGM+YAML，并自动创建不可变预览地图 v1 制品' },
   { method: 'GET', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '列出地图制品版本、MIME、大小、尺寸和 SHA-256' },
   { method: 'POST', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '把旧地图当前原图幂等固化为不可变制品版本' },
   { method: 'POST', path: '/api/projects/{project_id}/deployments', purpose: '账户按不可变资源版本和车辆列表创建批次' },
@@ -346,7 +346,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                 </section>
 
                 <section className="rounded-xl border border-blue-200 bg-blue-50/70 p-4">
-                  <SectionTitle description="账户接口使用 Bearer ACCOUNT_JWT 并校验项目权限；地图上传使用 multipart/form-data 的 name 与 image 字段，部署 idempotency_key 在项目和创建者范围内去重。">账户端资源与批次接口</SectionTitle>
+                  <SectionTitle description="账户接口使用 Bearer ACCOUNT_JWT 并校验项目权限；地图上传使用 multipart/form-data，图片发送 image，PGM+YAML 则发送 pgm 与 yaml；部署 idempotency_key 在项目和创建者范围内去重。">账户端资源与批次接口</SectionTitle>
                   <div className="mt-4 divide-y divide-blue-200/70 border-t border-blue-200/70">
                     {accountTaskEndpoints.map((endpoint) => (
                       <div key={`${endpoint.method}-${endpoint.path}`} className="grid gap-2 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)]">
