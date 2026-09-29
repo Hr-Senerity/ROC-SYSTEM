@@ -170,7 +170,7 @@ export function MapUploadModal({ projectId, token, onClose, onUploaded }: MapUpl
         <div className="space-y-5">
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">地图来源与坐标</legend>
-            <div role="radiogroup" aria-label="地图上传模式" className="grid gap-2 sm:grid-cols-3">
+            <div role="radiogroup" aria-label="地图上传模式" data-upload-contract="t18-v1" className="grid gap-2 sm:grid-cols-3">
               {uploadModes.map((item) => {
                 const Icon = item.icon;
                 const selected = mode === item.id;
