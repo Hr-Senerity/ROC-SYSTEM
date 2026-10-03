@@ -15,11 +15,19 @@
 ----
 - 地图上传增加普通图片、人工米制标定图片和成对 PGM+YAML 三种入口；Cartographer 导出的标准 PGM+YAML 复用同一流程。
 - 后端严格解析 P2/P5 PGM 与 ROS 地图 YAML，校验相对 ``image`` 路径、分辨率、原点、阈值、编码和像素上限，生成浏览器 PNG 预览，并通过迁移 ``010_map_sources.sql`` 保存原始来源键、SHA-256 与标准化元数据。
+- 增加 map package v2：普通图片包保留原始 PNG/JPEG，PGM+YAML 包保留原始双文件；manifest 暴露格式、坐标模式、resolution、origin 和逐文件大小、MIME、SHA-256 与下载地址。
+- 增加 ``map_artifact_files`` 不可变文件清单及按 ``file_id`` 下载接口；旧地图可幂等固化为单文件 package v2。
+- 增加 road-network v2：支持直线和三次贝塞尔曲线、画布控制柄、曲线/直线切换和采样参数编辑。
+- 后端在保存 revision 时按 ``uniform-parameter-v1`` 生成并持久化每个通行方向的确定性轨迹点，固定 6 位精度，并对单轨迹、全路网及正文大小设置上限。
+- 增加路网编辑 JSON 与轨迹 CSV 双导出；CSV 直接序列化持久化样本，和设备下载的路网 artifact 逐点一致。
+- 路网下发界面展示 schema、轨迹数、采样点数、采样间距与哈希；地图下发界面展示 package 版本、格式、文件数、坐标和原点。
 
 变更
 ----
 - OpenAPI 将车端鉴权从易误导的 HTTP Bearer 定义改为显式 ``Authorization`` apiKey，并固定请求头值为 ``Device <DEVICE_TOKEN>``。
 - 车辆接入凭据弹窗明确 Device Token 已唯一映射车辆；车辆 ID 由 ``hello.payload.vehicle_id`` 返回，上行 heartbeat/telemetry 正文不得重复声明车辆身份。
+- 地图上传不再把 PGM+YAML 的派生 PNG 当作车端制品；派生 PNG 仅用于浏览器预览，设备按 package manifest 下载原始文件。
+- 新建/编辑路网统一保存 schema v2；schema v1 revision 保持读取兼容，并在编辑器中升级为直线几何草稿。
 
 ==========
 [0.2.1] - 2026-09-24

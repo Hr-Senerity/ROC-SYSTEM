@@ -126,7 +126,10 @@ const char *kTaskSelect =
     "COALESCE(r.byte_size, a.byte_size) AS byte_size, "
     "COALESCE(r.sha256, a.sha256) AS sha256, "
     "r.schema_version, r.version AS road_version, a.version AS map_version, "
-    "r.network::text AS network_json, a.storage_key "
+    "r.network::text AS network_json, a.storage_key, a.package_version, "
+    "a.map_format, a.coordinate_mode AS artifact_coordinate_mode, "
+    "a.image_width, a.image_height, a.resolution, a.origin_x, a.origin_y, "
+    "a.origin_theta "
     "FROM deployment_tasks t "
     "JOIN deployment_batches b ON b.id = t.batch_id "
     "LEFT JOIN road_network_revisions r "
@@ -522,7 +525,46 @@ DeploymentResult DeploymentService::getManifest(
   if (!row["schema_version"].is_null()) {
     manifest["schema_version"] = row["schema_version"].as<int>();
   }
-  manifest["artifact_url"] = "/api/device/tasks/" + taskId + "/artifact";
+  if (value(row, "resource_type") == "map" &&
+      !row["package_version"].is_null() && row["package_version"].as<int>() == 2) {
+    manifest["package_version"] = 2;
+    manifest["package_digest_algorithm"] = "roc-file-set-v1";
+    manifest["map_format"] = value(row, "map_format");
+    manifest["coordinate_mode"] = value(row, "artifact_coordinate_mode");
+    manifest["image_width"] = row["image_width"].is_null()
+        ? Json::Value(Json::nullValue) : Json::Value(row["image_width"].as<int>());
+    manifest["image_height"] = row["image_height"].is_null()
+        ? Json::Value(Json::nullValue) : Json::Value(row["image_height"].as<int>());
+    manifest["resolution"] = row["resolution"].is_null()
+        ? Json::Value(Json::nullValue) : Json::Value(row["resolution"].as<double>());
+    Json::Value origin;
+    origin["x"] = row["origin_x"].is_null() ? Json::Value(Json::nullValue)
+                                             : Json::Value(row["origin_x"].as<double>());
+    origin["y"] = row["origin_y"].is_null() ? Json::Value(Json::nullValue)
+                                             : Json::Value(row["origin_y"].as<double>());
+    origin["theta"] = row["origin_theta"].is_null() ? Json::Value(Json::nullValue)
+                                                     : Json::Value(row["origin_theta"].as<double>());
+    manifest["origin"] = origin;
+    manifest["files"] = Json::arrayValue;
+    const auto files = tx.exec_params(
+        "SELECT id::text, role, file_name, content_type, byte_size, sha256 "
+        "FROM map_artifact_files WHERE artifact_id = $1::uuid ORDER BY role, id",
+        value(row, "resource_revision_id"));
+    for (const auto &file : files) {
+      Json::Value item;
+      const auto id = value(file, "id");
+      item["id"] = id;
+      item["role"] = value(file, "role");
+      item["file_name"] = value(file, "file_name");
+      item["content_type"] = value(file, "content_type");
+      item["byte_size"] = static_cast<Json::Int64>(file["byte_size"].as<long long>());
+      item["sha256"] = value(file, "sha256");
+      item["artifact_url"] = "/api/device/tasks/" + taskId + "/artifact/" + id;
+      manifest["files"].append(item);
+    }
+  } else {
+    manifest["artifact_url"] = "/api/device/tasks/" + taskId + "/artifact";
+  }
 
   Json::Value body;
   body["ok"] = true;
@@ -533,7 +575,7 @@ DeploymentResult DeploymentService::getManifest(
 
 DeploymentResult DeploymentService::getArtifact(
     const DeviceIdentity &device, const std::string &taskId,
-    const std::string &leaseToken) const {
+    const std::string &leaseToken, const std::string &fileId) const {
   pqxx::connection conn(connStr_);
   pqxx::work tx(conn);
   pqxx::result rows;
@@ -549,9 +591,24 @@ DeploymentResult DeploymentService::getArtifact(
       static_cast<Json::Int64>(row["byte_size"].as<long long>());
   body["sha256"] = value(row, "sha256");
   if (value(row, "resource_type") == "road_network") {
+    if (!fileId.empty()) return fail(404, "artifact_not_found", "Artifact file not found");
     body["network"] = parseJson(value(row, "network_json"));
   } else {
-    body["storage_key"] = value(row, "storage_key");
+    if (!row["package_version"].is_null() && row["package_version"].as<int>() == 2) {
+      if (fileId.empty()) return fail(409, "file_id_required", "Map package files must be downloaded by file id");
+      const auto files = tx.exec_params(
+          "SELECT storage_key, content_type, byte_size, sha256 FROM map_artifact_files "
+          "WHERE id = $1::uuid AND artifact_id = $2::uuid",
+          fileId, value(row, "resource_revision_id"));
+      if (files.empty()) return fail(404, "artifact_not_found", "Artifact file not found");
+      body["storage_key"] = value(files[0], "storage_key");
+      body["content_type"] = value(files[0], "content_type");
+      body["byte_size"] = static_cast<Json::Int64>(files[0]["byte_size"].as<long long>());
+      body["sha256"] = value(files[0], "sha256");
+    } else {
+      if (!fileId.empty()) return fail(404, "artifact_not_found", "Artifact file not found");
+      body["storage_key"] = value(row, "storage_key");
+    }
   }
   tx.commit();
   return {200, body};

@@ -1,4 +1,4 @@
-import { CircleDot, Focus, Hand, Link2, MousePointer2, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { CircleDot, Focus, Hand, Link2, MousePointer2, Route, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { EditorTool } from './types';
 
@@ -16,7 +16,8 @@ export function Toolbar({ tool, onToolChange, onZoomIn, onZoomOut, onFit }: Tool
       <ToolButton active={tool === 'select'} icon={<MousePointer2 />} label="选择" onClick={() => onToolChange('select')} />
       <ToolButton active={tool === 'pan'} icon={<Hand />} label="平移" onClick={() => onToolChange('pan')} />
       <ToolButton active={tool === 'add-node'} icon={<CircleDot />} label="节点" onClick={() => onToolChange('add-node')} />
-      <ToolButton active={tool === 'connect'} icon={<Link2 />} label="连边" onClick={() => onToolChange('connect')} />
+      <ToolButton active={tool === 'connect'} icon={<Link2 />} label="直线" onClick={() => onToolChange('connect')} />
+      <ToolButton active={tool === 'connect-curve'} icon={<Route />} label="曲线" onClick={() => onToolChange('connect-curve')} />
       <ToolButton active={tool === 'delete'} icon={<Trash2 />} label="删除" onClick={() => onToolChange('delete')} />
       <div className="mx-1 my-2 border-l lg:border-l-0 lg:border-t" />
       <ToolButton icon={<ZoomIn />} label="放大" onClick={onZoomIn} />

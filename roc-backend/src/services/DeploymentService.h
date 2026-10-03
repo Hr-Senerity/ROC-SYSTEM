@@ -56,7 +56,8 @@ class DeploymentService {
 
   DeploymentResult getArtifact(const DeviceIdentity &device,
                                const std::string &taskId,
-                               const std::string &leaseToken) const;
+                               const std::string &leaseToken,
+                               const std::string &fileId = {}) const;
 
   DeploymentResult updateTaskStatus(const DeviceIdentity &device,
                                     const std::string &taskId,

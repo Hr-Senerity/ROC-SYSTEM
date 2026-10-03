@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roc.example/schemas/road-network-v2.schema.json",
+  "title": "ROC semantic road network and deterministic trajectories v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "coordinate_mode", "sampling", "nodes", "edges", "trajectories"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "coordinate_mode": { "enum": ["metric", "legacy-normalized"] },
+    "sampling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "spacing", "precision"],
+      "properties": {
+        "algorithm": { "const": "uniform-parameter-v1" },
+        "spacing": { "type": "number", "exclusiveMinimum": 0 },
+        "precision": { "const": 6 }
+      }
+    },
+    "nodes": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/node" } },
+    "edges": { "type": "array", "maxItems": 50000, "items": { "$ref": "#/$defs/edge" } },
+    "trajectories": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/trajectory" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
+    "trajectoryId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$" },
+    "point": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "node": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "x", "y", "kind", "label"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }, "x": { "type": "number" }, "y": { "type": "number" },
+        "kind": { "const": "waypoint" }, "label": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "geometry": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["type"],
+          "properties": { "type": { "const": "line" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "control1", "control2"],
+          "properties": {
+            "type": { "const": "cubic_bezier" },
+            "control1": { "$ref": "#/$defs/point" },
+            "control2": { "$ref": "#/$defs/point" }
+          }
+        }
+      ]
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "from", "to", "direction", "max_speed_mps", "geometry"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }, "from": { "$ref": "#/$defs/id" }, "to": { "$ref": "#/$defs/id" },
+        "direction": { "enum": ["both", "forward"] },
+        "max_speed_mps": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 100 },
+        "geometry": { "$ref": "#/$defs/geometry" }
+      }
+    },
+    "sample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "x", "y", "s", "heading"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 }, "x": { "type": "number" }, "y": { "type": "number" },
+        "s": { "type": "number", "minimum": 0 }, "heading": { "type": "number" }
+      }
+    },
+    "trajectory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "edge_id", "direction", "max_speed_mps", "points", "length"],
+      "properties": {
+        "id": { "$ref": "#/$defs/trajectoryId" }, "edge_id": { "$ref": "#/$defs/id" },
+        "direction": { "enum": ["forward", "reverse"] },
+        "max_speed_mps": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 100 },
+        "points": { "type": "array", "minItems": 2, "maxItems": 10000, "items": { "$ref": "#/$defs/sample" } },
+        "length": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

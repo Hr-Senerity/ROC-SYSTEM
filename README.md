@@ -84,7 +84,7 @@ ROC-SYSTEM/
 │       └── release.env.example      # release 运行配置模板
 ├── postgres/
 │   ├── init/init.sql                # 全新数据库完整 Schema
-│   └── migrations/                  # 001–010 增量迁移
+│   └── migrations/                  # 001–011 增量迁移
 ├── roc-backend/
 │   ├── CMakeLists.txt               # C++17 · Drogon · libpqxx · OpenSSL · jsoncpp · yaml-cpp · zlib
 │   ├── schemas/                     # OpenAPI 3.1 与三个 JSON Schema
@@ -97,7 +97,7 @@ ROC-SYSTEM/
 │       │   ├── AuthController.{h,cpp}      # register · login · me · change-password · logout
 │       │   ├── AdminController.{h,cpp}     # 用户、统计、角色与邀请码管理
 │       │   ├── ProjectController.{h,cpp}   # 项目/地图 CRUD · 文件上传
-│       │   ├── MapArtifactController.{h,cpp} # 地图原图不可变制品 API
+│       │   ├── MapArtifactController.{h,cpp} # 不可变地图包与文件清单 API
 │       │   ├── RoadNetworkController.{h,cpp} # 路网不可变版本 API
 │       │   ├── VehicleController.{h,cpp}   # 车辆注册 · 状态更新 · 删除
 │       │   ├── DeploymentController.{h,cpp} # 持久下发批次与设备任务 API
@@ -115,7 +115,7 @@ ROC-SYSTEM/
 │       │   └── DeviceProtocol.{h,cpp}       # JSON Device Protocol v1 编解码与校验
 │       ├── services/
 │       │   ├── DeploymentService.{h,cpp}    # 任务、租约、重试与事件流水
-│       │   ├── RoadNetworkService.{h,cpp}   # road-network v1 强校验与规范化
+│       │   ├── RoadNetworkService.{h,cpp}   # road-network v1/v2 校验、规范化与采样
 │       │   └── VehicleStatusService.{h,cpp} # sequence 与车辆快照原子持久化
 │       └── utils/
 │           ├── JwtHelper.{h,cpp}           # JWT 签发与验证 (HMAC-SHA256)
@@ -223,7 +223,7 @@ Vehicle C++17 client
 - 最后设备 sequence 与遥测在同一数据库更新中提交；重复 sequence 返回幂等确认，不重复写入或广播。
 - ROC 二进制、`/api/protocol/status`、`/api/protocol/command`、`/api/protocol/roc` 和 `/api/protocol/pending/{robot_id}` 已删除。
 - 服务端通过此常连接发送 `task.available` 通知；耐久任务和大文件仍通过 HTTP(S) 接受和下载，不在 WebSocket 传输大文件。
-- REST API 的 OpenAPI 3.1 合同位于 `roc-backend/schemas/openapi-v1.json`；设备通信、路网和下发任务的 JSON Schema 位于同目录的 `device-protocol-v1.schema.json`、`road-network-v1.schema.json` 与 `deployment-task-v1.schema.json`。路网保存接口只接受通过 v1 强校验的规范 JSON。
+- REST API 的 OpenAPI 3.1 合同位于 `roc-backend/schemas/openapi-v1.json`；设备通信、路网和下发任务的 JSON Schema 位于同目录的 `device-protocol-v1.schema.json`、`road-network-v1.schema.json`、`road-network-v2.schema.json` 与 `deployment-task-v1.schema.json`。路网 v1 保持只读兼容，新编辑和保存统一生成 v2。
 ### 前端路由守卫
 
 ```
@@ -266,13 +266,15 @@ Vehicle opens /ws/device with a per-vehicle Device token
 
 ```
 地图资源 → /projects/{pid}/maps/{mid}/edit
-  → 选择 / 平移 / 新增节点 / 连边 / 删除
-  → 前端结构校验 + 撤销/重做 + 未保存提示
+  → 选择 / 平移 / 新增节点 / 直线或三次贝塞尔连边 / 拖动控制柄 / 删除
+  → 设置确定性采样间距 + 前端结构校验 + 撤销/重做 + 未保存提示
   → POST road-network/revisions
-    → 后端重新校验 schema、坐标模式、ID、引用、自环、重复边、限速与 10 MiB 上限
-    → 节点/边按 ID 规范化排序 → SHA-256
+    → 后端重新校验 schema、坐标模式、ID、引用、自环、重复边、曲线、限速与容量上限
+    → 按 uniform-parameter-v1 生成每个通行方向的有序轨迹点
+    → 节点/边按 ID 规范化排序，轨迹点固定 6 位精度 → SHA-256
     → road_network_revisions 追加不可变版本
   → 历史版本可读取为新草稿；再次保存始终产生新版本
+  → 编辑 JSON 与轨迹 CSV 均由该不可变 revision 导出
 ```
 
 监控页保持只读并读取地图的最新兼容快照；编辑器不会后台自动保存。只有已持久化版本才能在后续路网下发流程中作为资源引用。
@@ -290,7 +292,7 @@ Vehicle opens /ws/device with a per-vehicle Device token
   → 可取消尚未进入最终交付阶段的任务；失败/取消/过期车辆可按原版本创建新批次重试
 ```
 
-创建成功只代表“任务已创建”。只有车端经 Device token + 租约下载、校验并明确回报 `delivered`，界面才显示“已送达”；该状态不表示车辆已加载或应用路网。当前批次 ID 写入编辑页查询参数，浏览器刷新后可恢复逐车状态。存在未保存草稿时，下发入口禁用，避免草稿与不可变版本混淆。
+创建成功只代表“任务已创建”。road-network v2 artifact 同时含语义拓扑、`line`/`cubic_bezier` 曲线定义以及服务器持久化的确定性 `trajectories[].points`；双向边生成 forward/reverse 两条轨迹。只有车端经 Device token + 租约下载、校验并明确回报 `delivered`，界面才显示“已送达”；该状态不表示车辆已加载或应用路网。当前批次 ID 写入编辑页查询参数，浏览器刷新后可恢复逐车状态。存在未保存草稿时，下发入口禁用，避免草稿与不可变版本混淆。
 
 ### 地图制品上传与下发流
 
@@ -302,15 +304,18 @@ multipart/form-data 选择三种入口：
   → 后端校验图片签名或 P2/P5 PGM、YAML 路径/原点/阈值/有限数/像素上限
   → PGM 安全生成 PNG 浏览器预览，并保留原始 PGM、YAML 及各自 SHA-256
   → 所有文件先写临时文件再原子移动
-  → 同一事务创建 maps 记录和 map_artifacts v1
-    → 记录来源类型、坐标元数据、MIME、像素尺寸、字节数、SHA-256 与不可变存储键
+  → 同一事务创建 maps、map_artifacts package v2 和 map_artifact_files
+    → 图片包保存一个原始 PNG/JPEG 文件
+    → PGM+YAML 包保存原始 PGM 与原始 YAML 两个文件；PNG 仅用于浏览器预览
+    → 记录来源类型、地图格式、坐标模式、像素尺寸、resolution、origin、逐文件 MIME/字节数/SHA-256 与包摘要
   → 地图卡片“下发地图” → 选择项目车辆并二次确认
   → 复用持久部署批次、Device token、租约、manifest 和制品下载接口
-  → 车端按 SHA-256 校验当前地图制品并保存或交给受控本地适配器
+  → manifest files[] 为每个文件提供独立 file_id / URL / MIME / 大小 / SHA-256
+  → 车端逐文件校验并保存或交给受控本地适配器
   → 仅在车端回报 delivered 后更新 delivered_map_artifact_id
 ```
 
-旧地图可通过制品接口将当前受保护原图固化为 v1；同一 SHA-256 重复调用保持幂等。PGM+YAML 首轮以派生 PNG 作为浏览器预览和既有单文件地图制品，原始双文件保持可追溯但不会在 T18 中暗改为新的车端双文件协议。地图删除会同时清理未被引用的路网版本、制品元数据、预览图和原始来源文件；一旦版本进入部署历史或被车辆确认为已送达，删除返回 409，以免破坏审计链。平台不声称车辆已加载或应用地图。
+旧地图可通过制品接口将当前受保护原图幂等固化为单文件 package v2；同一包摘要重复调用保持幂等。PGM+YAML 的车端资源包是原始双文件，派生 PNG 只用于浏览器预览。地图删除会同时清理未被引用的路网版本、包/文件元数据、预览图和原始来源文件；一旦版本进入部署历史或被车辆确认为已送达，删除返回 409，以免破坏审计链。平台不声称车辆已加载或应用地图。
 
 ### 地图可视化 — 统一 SVG 坐标空间
 
@@ -320,14 +325,14 @@ multipart/form-data 选择三种入口：
 地图元数据 → worldToMap() → 图片像素坐标
 fitScale + zoom + pan → 单一 SVG <g transform>
   ├── 鉴权加载的地图 <image>
-  ├── road_network 路网 <line>
+  ├── road_network 直线/三次贝塞尔曲线 <path>
   └── 当前地图车辆标记与方向
 
 交互:
   - 光标锚定缩放、pointer capture 平移、适应视图和专注模式
   - 桌面三栏显示车辆列表/地图/详情；窄屏使用车辆选择器和详情浮层
   - 选中状态保存 vehicle ID，详情持续从实时 store 派生
-  - 路网导出为 CSV（from_x,from_y,to_x,to_y）
+  - 导出规范编辑 JSON，或与设备 artifact 逐点一致的轨迹 CSV
 ```
 
 ## 数据库 Schema
@@ -419,15 +424,17 @@ graph TB
 | `/api/projects/{id}/maps` | GET | Bearer | 已授权项目的地图列表 |
 | `/api/projects/{pid}/maps/{mid}` | GET | Bearer | 读取单张地图及坐标元数据 |
 | `/api/projects/{pid}/maps/{mid}/image` | GET | Bearer | 校验项目归属后读取地图图片；不提供匿名 `/static` 回退 |
-| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 导入普通/人工标定 PNG/JPEG，或成对 PGM+YAML；Cartographer 先输出 PGM+YAML 后复用同一入口；自动创建不可变预览 v1 制品 |
+| `/api/projects/{id}/maps/upload` | POST | Bearer | `multipart/form-data` 导入普通/人工标定 PNG/JPEG，或成对 PGM+YAML；Cartographer 先输出 PGM+YAML 后复用同一入口；自动创建不可变地图包 v2 |
 | `/api/projects/{pid}/default-map` | PUT | Bearer | 原子设置项目默认地图 |
 | `/api/projects/{pid}/maps/{mid}` | PATCH | Bearer | 更新地图信息 |
 | `/api/projects/{pid}/maps/{mid}` | DELETE | Bearer | 删除无车辆绑定且无交付历史的地图，并清理未引用制品文件 |
-| `/api/projects/{pid}/maps/{mid}/artifacts` | GET | Bearer | 列出不可变地图制品版本及当前版本 |
-| `/api/projects/{pid}/maps/{mid}/artifacts` | POST | Bearer | 将旧地图当前原图幂等固化为不可变制品版本 |
+| `/api/projects/{pid}/maps/{mid}/artifacts` | GET | Bearer | 列出不可变地图包版本、格式、坐标、文件数和当前版本 |
+| `/api/projects/{pid}/maps/{mid}/artifacts` | POST | Bearer | 将旧地图当前原图幂等固化为单文件 package v2 |
 | `/api/projects/{pid}/maps/{mid}/road-network/revisions` | GET | Bearer | 列出不可变路网版本及当前最新版本 |
-| `/api/projects/{pid}/maps/{mid}/road-network/revisions` | POST | Bearer | 校验并创建新的不可变 road-network v1 版本 |
+| `/api/projects/{pid}/maps/{mid}/road-network/revisions` | POST | Bearer | 校验语义拓扑/曲线，生成确定性轨迹并创建不可变 road-network v2 |
 | `/api/projects/{pid}/maps/{mid}/road-network/revisions/{rid}` | GET | Bearer | 读取指定版本元数据和规范化路网正文 |
+| `/api/projects/{pid}/maps/{mid}/road-network/revisions/{rid}/export/editor.json` | GET | Bearer | 导出规范化语义拓扑、曲线和持久化采样 JSON |
+| `/api/projects/{pid}/maps/{mid}/road-network/revisions/{rid}/export/trajectory.csv` | GET | Bearer | 导出与设备 artifact 逐点一致的确定性轨迹 CSV |
 
 ### 车辆 (Vehicles)
 
@@ -474,11 +481,12 @@ journalctl -u roc-virtual-vehicle@vehicle-01 -f
 | `/api/projects/{project_id}/deployments/{batch_id}` | GET | Bearer | 查询批次及逐车任务状态 |
 | `/api/projects/{project_id}/deployments/{batch_id}/cancel` | POST | Bearer | 取消排队、已通知、已接受或下载中的任务 |
 | `/api/device/tasks/{task_id}/accept` | POST | Device | 接受本车任务并取得 30 分钟租约；重复接受返回同一租约 |
-| `/api/device/tasks/{task_id}/manifest` | GET | Device + `X-Task-Lease` | 获取资源版本、类型、大小、SHA-256 和下载地址 |
-| `/api/device/tasks/{task_id}/artifact` | GET | Device + `X-Task-Lease` | 完整下载道路 JSON 或原始地图图片；不支持 Range，携带 Range 返回 416 |
+| `/api/device/tasks/{task_id}/manifest` | GET | Device + `X-Task-Lease` | 获取资源版本、类型、包/采样元数据、大小、SHA-256 和下载地址 |
+| `/api/device/tasks/{task_id}/artifact` | GET | Device + `X-Task-Lease` | 完整下载路网 JSON 或兼容单文件制品；不支持 Range |
+| `/api/device/tasks/{task_id}/artifact/{file_id}` | GET | Device + `X-Task-Lease` | 下载 map package v2 中 manifest 指定的单个原始文件；逐文件返回 MIME、大小和 SHA-256 |
 | `/api/device/tasks/{task_id}/status` | POST | Device + `X-Task-Lease` | 以唯一 `event_id` 幂等回报下载、交付、完成或失败状态 |
 
-任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。车端必须在完整下载后核对字节数、MIME 和 SHA-256；截断、类型或哈希不匹配时必须回报 `failed`，不得回报 `delivered`。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
+任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。车端必须在完整下载后核对字节数、MIME 和 SHA-256；地图包须逐文件校验，路网 v2 须保留平台点序且不得自行重采样替换。截断、类型、哈希或样本不匹配时必须回报 `failed`，不得回报 `delivered`。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
 
 ### 浏览器实时通信 (WebSocket)
 
@@ -630,7 +638,7 @@ corepack pnpm run build
 corepack pnpm run test:e2e
 ```
 
-API 合同测试会校验 OpenAPI 与三份 JSON Schema，并确认 47 个 REST 操作的路由、认证和唯一 `operationId`。邀请码的有效注册、重复使用拒绝和撤销后拒绝已完成人工验收，登录、注册、邀请码和错误态组件测试也已通过；两个并发注册请求争用同一码时最多一个成功，仍需数据库/API 自动化。目标主机还应运行全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的独立构建机或 CI 上完成。
+API 合同测试会校验 OpenAPI 与四份 JSON Schema，并确认 50 个 REST 操作的路由、认证和唯一 `operationId`。邀请码的有效注册、重复使用拒绝和撤销后拒绝已完成人工验收，登录、注册、邀请码和错误态组件测试也已通过；两个并发注册请求争用同一码时最多一个成功，仍需数据库/API 自动化。目标主机还应运行全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的独立构建机或 CI 上完成。
 
 ## 用户角色
 

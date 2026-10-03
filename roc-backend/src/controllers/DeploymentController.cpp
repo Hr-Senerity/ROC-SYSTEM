@@ -351,6 +351,64 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
       {Get});
 
   app().registerHandler(
+      "/api/device/tasks/{taskId}/artifact/{fileId}",
+      [connStr, jwtSecret, mapDirectory, taskLeaseSeconds](
+          const HttpRequestPtr &request,
+          std::function<void(const HttpResponsePtr &)> &&callback,
+          const std::string &taskId, const std::string &fileId) {
+        if (!validUuid(taskId, callback, "task_id") ||
+            !validUuid(fileId, callback, "file_id")) return;
+        try {
+          roc::service::DeploymentService service(connStr, jwtSecret,
+                                                  taskLeaseSeconds);
+          const auto device = authenticateDevice(request, service);
+          if (!device) {
+            callback(jsonResponse(
+                401, errorBody("authentication_failed", "Invalid device token")));
+            return;
+          }
+          if (!request->getHeader("Range").empty()) {
+            callback(jsonResponse(
+                416, errorBody("range_not_supported",
+                               "Partial artifact downloads are not supported")));
+            return;
+          }
+          const auto result = service.getArtifact(
+              *device, taskId, request->getHeader("X-Task-Lease"), fileId);
+          if (!result.ok()) {
+            sendResult(result, callback);
+            return;
+          }
+          const auto fileName = std::filesystem::path(
+                                    result.body["storage_key"].asString())
+                                    .filename();
+          if (fileName.empty() || fileName == "." || fileName == "..") {
+            callback(jsonResponse(
+                404, errorBody("artifact_not_found", "Artifact not found")));
+            return;
+          }
+          const auto path = std::filesystem::path(mapDirectory) / fileName;
+          std::error_code error;
+          if (!std::filesystem::is_regular_file(path, error) || error) {
+            callback(jsonResponse(
+                404, errorBody("artifact_not_found", "Artifact not found")));
+            return;
+          }
+          auto response = HttpResponse::newFileResponse(path.string());
+          response->setContentTypeString(result.body["content_type"].asString());
+          response->addHeader("X-Content-SHA256", result.body["sha256"].asString());
+          response->addHeader("Cache-Control", "no-store");
+          response->addHeader("X-Content-Type-Options", "nosniff");
+          callback(response);
+        } catch (const std::exception &error) {
+          LOG_ERROR << "Get device artifact file error: " << error.what();
+          callback(jsonResponse(
+              500, errorBody("internal_error", "Unable to read artifact")));
+        }
+      },
+      {Get});
+
+  app().registerHandler(
       "/api/device/tasks/{taskId}/status",
       [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,

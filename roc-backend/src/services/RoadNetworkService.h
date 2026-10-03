@@ -17,4 +17,6 @@ struct RoadNetworkValidation {
 RoadNetworkValidation validateRoadNetwork(const Json::Value &network,
                                            const std::string &coordinateMode);
 
+std::string roadNetworkTrajectoryCsv(const Json::Value &network);
+
 }  // namespace roc::service

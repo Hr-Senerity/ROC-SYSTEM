@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, Redo2, Save, Undo2 } from 'lucide-react';
+import { ArrowLeft, Download, FileJson2, Loader2, Redo2, Save, Undo2 } from 'lucide-react';
 import { MapEditor } from './road-network-editor/MapEditor';
 import { PropertiesPanel } from './road-network-editor/PropertiesPanel';
 import { Toolbar } from './road-network-editor/Toolbar';
@@ -61,6 +61,12 @@ export function RoadNetworkEditorPage() {
               dirty={editor.dirty}
             />
           )}
+          {editor.currentRevision && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => void editor.downloadRevision('editor')}><FileJson2 />编辑数据</Button>
+              <Button variant="outline" size="sm" disabled={editor.currentRevision.schemaVersion !== 2} onClick={() => void editor.downloadRevision('trajectory')}><Download />轨迹 CSV</Button>
+            </>
+          )}
           <Button
             size="sm"
             disabled={!editor.dirty || editor.saving || !editor.coordinateReady}
@@ -106,17 +112,22 @@ export function RoadNetworkEditorPage() {
           onWheel={editor.handleWheel}
           onNodePointerDown={editor.handleNodePointerDown}
           onEdgePointerDown={editor.handleEdgePointerDown}
+          onControlPointerDown={editor.handleControlPointerDown}
         />
 
         <aside className="min-h-0 overflow-y-auto border-t border-slate-200 bg-white lg:border-l lg:border-t-0">
           <PropertiesPanel
             selectedNode={editor.selectedNode}
             selectedEdge={editor.selectedEdge}
+            samplingSpacing={editor.network.sampling.spacing}
             onBeginEdit={editor.beginPropertyEdit}
             onFinishEdit={editor.finishPropertyEdit}
             onNodeLabelChange={editor.changeNodeLabel}
             onEdgeDirectionChange={editor.changeEdgeDirection}
             onEdgeSpeedChange={editor.changeEdgeSpeed}
+            onEdgeGeometryChange={editor.changeEdgeGeometry}
+            onEdgeControlChange={editor.changeEdgeControl}
+            onSamplingSpacingChange={editor.changeSamplingSpacing}
             onDelete={editor.deleteSelection}
           />
           <ValidationPanel errors={editor.validationErrors} expanded={editor.showValidation} />

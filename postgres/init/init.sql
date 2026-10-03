@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS road_network_revisions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   map_id UUID NOT NULL REFERENCES maps(id) ON DELETE RESTRICT,
   version INTEGER NOT NULL CHECK (version > 0),
-  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version = 1),
+  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version IN (1, 2)),
   network JSONB NOT NULL,
   content_type VARCHAR(96) NOT NULL DEFAULT 'application/vnd.roc.road-network+json',
   byte_size BIGINT NOT NULL CHECK (byte_size > 0 AND byte_size <= 10485760),
@@ -233,15 +233,34 @@ CREATE TABLE IF NOT EXISTS map_artifacts (
   origin_x DOUBLE PRECISION,
   origin_y DOUBLE PRECISION,
   origin_theta DOUBLE PRECISION,
+  package_version INTEGER NOT NULL DEFAULT 1 CHECK (package_version IN (1, 2)),
+  map_format VARCHAR(32) CHECK (map_format IS NULL OR map_format IN ('png', 'jpeg', 'pgm-yaml')),
+  coordinate_mode VARCHAR(32) CHECK (coordinate_mode IS NULL OR coordinate_mode IN ('legacy-normalized', 'metric')),
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (map_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS map_artifact_files (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  artifact_id UUID NOT NULL REFERENCES map_artifacts(id) ON DELETE CASCADE,
+  role VARCHAR(32) NOT NULL CHECK (role IN ('image', 'pgm', 'yaml')),
+  file_name VARCHAR(255) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  content_type VARCHAR(96) NOT NULL,
+  byte_size BIGINT NOT NULL CHECK (byte_size > 0 AND byte_size <= 52428800),
+  sha256 CHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (artifact_id, role),
+  UNIQUE (artifact_id, file_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_road_network_revisions_map
   ON road_network_revisions(map_id, version DESC);
 CREATE INDEX IF NOT EXISTS idx_map_artifacts_map
   ON map_artifacts(map_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_map_artifact_files_artifact
+  ON map_artifact_files(artifact_id, role);
 
 ALTER TABLE vehicles
   ADD COLUMN IF NOT EXISTS delivered_map_artifact_id UUID

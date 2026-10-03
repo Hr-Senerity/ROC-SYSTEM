@@ -278,7 +278,7 @@
         "summary": "Validate and save an immutable road-network revision",
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["network"], "properties": { "network": { "$ref": "./road-network-v1.schema.json" } } } } }
+          "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["network"], "properties": { "network": { "oneOf": [{ "$ref": "./road-network-v1.schema.json" }, { "$ref": "./road-network-v2.schema.json" }] } } } } }
         },
         "responses": { "201": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" }, "422": { "$ref": "#/components/responses/Error" } }
       }
@@ -290,6 +290,24 @@
         "tags": ["Road networks"],
         "summary": "Read a saved road-network revision",
         "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "403": { "$ref": "#/components/responses/Error" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}/export/editor.json": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/MapId" }, { "$ref": "#/components/parameters/RevisionId" }],
+      "get": {
+        "operationId": "exportRoadNetworkEditorJson",
+        "tags": ["Road networks"],
+        "summary": "Export the immutable semantic editor JSON",
+        "responses": { "200": { "description": "Road-network JSON" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}/export/trajectory.csv": {
+      "parameters": [{ "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/MapId" }, { "$ref": "#/components/parameters/RevisionId" }],
+      "get": {
+        "operationId": "exportRoadNetworkTrajectoryCsv",
+        "tags": ["Road networks"],
+        "summary": "Export the exact deterministic trajectory samples as CSV",
+        "responses": { "200": { "description": "Trajectory CSV" }, "404": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
       }
     },
     "/api/vehicles": {
@@ -403,14 +421,35 @@
       "get": {
         "operationId": "downloadDeviceTaskArtifact",
         "tags": ["Device tasks"],
-        "summary": "Download a full road JSON or original map image",
+        "summary": "Download a complete road-network v1/v2 artifact or legacy map image",
         "description": "Range requests are intentionally rejected with 416; clients must download the complete immutable artifact and verify X-Content-SHA256.",
         "security": [{ "deviceAuthorization": [] }],
         "responses": {
-          "200": { "description": "Complete immutable artifact", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, "content": { "application/vnd.roc.road-network+json": { "schema": { "$ref": "./road-network-v1.schema.json" } }, "image/png": { "schema": { "type": "string", "contentEncoding": "binary" } }, "image/jpeg": { "schema": { "type": "string", "contentEncoding": "binary" } } } },
+          "200": { "description": "Complete immutable artifact", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, "content": { "application/vnd.roc.road-network+json": { "schema": { "$ref": "./road-network-v1.schema.json" } }, "application/vnd.roc.road-network.v2+json": { "schema": { "$ref": "./road-network-v2.schema.json" } }, "image/png": { "schema": { "type": "string", "contentEncoding": "binary" } }, "image/jpeg": { "schema": { "type": "string", "contentEncoding": "binary" } } } },
           "401": { "$ref": "#/components/responses/Error" },
           "403": { "$ref": "#/components/responses/Error" },
           "404": { "$ref": "#/components/responses/Error" },
+          "416": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/device/tasks/{taskId}/artifact/{fileId}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/TaskId" },
+        { "$ref": "#/components/parameters/TaskLease" },
+        { "name": "fileId", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Uuid" } }
+      ],
+      "get": {
+        "operationId": "downloadDeviceTaskArtifactFile",
+        "tags": ["Device tasks"],
+        "summary": "Download one immutable file from a map package v2",
+        "description": "The file id, media type, byte size and SHA-256 are supplied by the task manifest. Range requests return 416.",
+        "security": [{ "deviceAuthorization": [] }],
+        "responses": {
+          "200": { "description": "Complete immutable package file", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
           "416": { "$ref": "#/components/responses/Error" }
         }
       }

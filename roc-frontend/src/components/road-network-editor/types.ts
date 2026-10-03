@@ -1,4 +1,4 @@
-export type EditorTool = 'select' | 'pan' | 'add-node' | 'connect' | 'delete';
+export type EditorTool = 'select' | 'pan' | 'add-node' | 'connect' | 'connect-curve' | 'delete';
 
 export type EditorSelection = {
   type: 'node' | 'edge';

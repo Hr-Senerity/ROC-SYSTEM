@@ -89,7 +89,7 @@
           "required": [
             "task_id", "batch_id", "project_id", "resource_type",
             "resource_revision_id", "map_id", "content_type",
-            "byte_size", "sha256", "version", "artifact_url"
+            "byte_size", "sha256", "version"
           ],
           "properties": {
             "task_id": { "$ref": "#/$defs/uuid" },
@@ -105,12 +105,55 @@
               "pattern": "^[0-9a-f]{64}$"
             },
             "version": { "type": "integer", "minimum": 1 },
-            "schema_version": { "type": "integer", "minimum": 1 },
+            "schema_version": { "type": "integer", "enum": [1, 2] },
+            "package_version": { "const": 2 },
+            "package_digest_algorithm": { "const": "roc-file-set-v1" },
+            "map_format": { "enum": ["png", "jpeg", "pgm-yaml"] },
+            "coordinate_mode": { "enum": ["metric", "legacy-normalized"] },
+            "image_width": { "type": ["integer", "null"], "minimum": 1 },
+            "image_height": { "type": ["integer", "null"], "minimum": 1 },
+            "resolution": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+            "origin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["x", "y", "theta"],
+              "properties": {
+                "x": { "type": ["number", "null"] },
+                "y": { "type": ["number", "null"] },
+                "theta": { "type": ["number", "null"] }
+              }
+            },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "role", "file_name", "content_type", "byte_size", "sha256", "artifact_url"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/uuid" },
+                  "role": { "enum": ["image", "pgm", "yaml"] },
+                  "file_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+                  "content_type": { "type": "string", "maxLength": 96 },
+                  "byte_size": { "type": "integer", "minimum": 1 },
+                  "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "artifact_url": { "type": "string", "pattern": "^/api/device/tasks/[0-9a-f-]+/artifact/[0-9a-f-]+$" }
+                }
+              }
+            },
             "artifact_url": {
               "type": "string",
               "pattern": "^/api/device/tasks/[0-9a-f-]+/artifact$"
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "package_version": { "const": 2 } }, "required": ["package_version"] },
+              "then": { "required": ["package_digest_algorithm", "map_format", "coordinate_mode", "origin", "files"] },
+              "else": { "required": ["artifact_url"] }
+            }
+          ]
         }
       }
     }

@@ -7,15 +7,17 @@ const savedRevisionId = '44444444-4444-4444-8444-444444444444';
 const editorPath = `/projects/${projectId}/maps/${mapId}/edit`;
 
 const initialNetwork = {
-  schema_version: 1 as const,
+  schema_version: 2 as const,
   coordinate_mode: 'legacy-normalized' as const,
+  sampling: { algorithm: 'uniform-parameter-v1' as const, spacing: 0.01, precision: 6 as const },
   nodes: [
     { id: 'node-a', x: 20, y: 25, kind: 'waypoint' as const, label: '起点' },
     { id: 'node-b', x: 75, y: 70, kind: 'waypoint' as const, label: '终点' },
   ],
   edges: [
-    { id: 'edge-a', from: 'node-a', to: 'node-b', direction: 'both' as const, max_speed_mps: null },
+    { id: 'edge-a', from: 'node-a', to: 'node-b', direction: 'both' as const, max_speed_mps: null, geometry: { type: 'line' as const } },
   ],
+  trajectories: [],
 };
 
 const initialRevision = revision(revisionId, 1, initialNetwork);
@@ -25,8 +27,8 @@ function revision(id: string, version: number, network: typeof initialNetwork) {
     id,
     map_id: mapId,
     version,
-    schema_version: 1,
-    content_type: 'application/vnd.roc.road-network+json;version=1',
+    schema_version: network.schema_version,
+    content_type: 'application/vnd.roc.road-network.v2+json',
     byte_size: JSON.stringify(network).length,
     sha256: `${version}`.repeat(64),
     created_by: null,
@@ -158,13 +160,13 @@ test('画布支持添加、拖动、连边、删除、撤销重做、保存和�
   const xAfterDrag = Number(await page.getByLabel('X').inputValue());
   expect(xAfterDrag).not.toBeCloseTo(xBeforeDrag);
 
-  await page.getByRole('button', { name: '连边' }).click();
+  await page.getByRole('button', { name: '曲线' }).click();
   await createdNodes.nth(2).locator('circle').click();
   await createdNodes.nth(3).locator('circle').click();
   await expect(page.locator('[data-edge-id]')).toHaveCount(2);
 
   await page.getByRole('button', { name: '删除', exact: true }).click();
-  await page.locator('[data-edge-id]').nth(1).locator('line').nth(1).click();
+  await page.locator('[data-edge-id]').nth(1).locator('path').last().click();
   await expect(page.locator('[data-edge-id]')).toHaveCount(1);
 
   await page.getByRole('button', { name: '撤销' }).click();
@@ -185,6 +187,30 @@ test('画布支持添加、拖动、连边、删除、撤销重做、保存和�
   await expect(page.getByText('已加载 v1；继续修改并保存会创建新版本。')).toBeVisible();
 });
 
+test('曲线控制柄、采样参数和 v2 几何会保存到不可变版本', async ({ page }) => {
+  const fixtures = await installFixtures(page);
+  await openEditor(page);
+
+  await page.locator('[data-edge-id]').first().locator('path').last().click();
+  await page.getByLabel('几何类型').selectOption('cubic_bezier');
+  await expect(page.getByLabel('曲线控制柄').locator('circle')).toHaveCount(2);
+
+  await page.getByLabel('控制点 1 Y').fill('41.25');
+  await page.getByLabel('确定性采样间距').fill('0.02');
+  await page.getByRole('button', { name: '保存新版本' }).click();
+  await expect(page.getByText('已保存为不可变版本 v2。')).toBeVisible();
+
+  const saved = fixtures.getSavedNetwork() as unknown as {
+    schema_version: number;
+    sampling: { algorithm: string; spacing: number; precision: number };
+    edges: Array<{ geometry: { type: string; control1?: { y: number } } }>;
+  };
+  expect(saved.schema_version).toBe(2);
+  expect(saved.sampling).toEqual({ algorithm: 'uniform-parameter-v1', spacing: 0.02, precision: 6 });
+  expect(saved.edges[0].geometry.type).toBe('cubic_bezier');
+  expect(saved.edges[0].geometry.control1?.y).toBe(41.25);
+});
+
 test('键盘操作覆盖工具切换、输入保护、删除、撤销重做与对话框焦点恢复', async ({ page }) => {
   await installFixtures(page);
   await openEditor(page);
@@ -192,7 +218,7 @@ test('键盘操作覆盖工具切换、输入保护、删除、撤销重做与�
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: '退出路网编辑器' })).toBeFocused();
 
-  const connectButton = page.getByRole('button', { name: '连边' });
+  const connectButton = page.getByRole('button', { name: '直线' });
   await connectButton.focus();
   await page.keyboard.press('Space');
   await expect(connectButton).toHaveAttribute('aria-pressed', 'true');

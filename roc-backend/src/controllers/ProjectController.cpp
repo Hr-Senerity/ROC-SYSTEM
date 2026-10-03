@@ -372,6 +372,13 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
               "WHERE map.project_id = $1::uuid",
               projId);
           for (const auto &artifact : artifactFiles) rememberFile(artifact[0]);
+          const auto packageFiles = tx.exec_params(
+              "SELECT file.storage_key FROM map_artifact_files file "
+              "JOIN map_artifacts artifact ON artifact.id = file.artifact_id "
+              "JOIN maps map ON map.id = artifact.map_id "
+              "WHERE map.project_id = $1::uuid",
+              projId);
+          for (const auto &file : packageFiles) rememberFile(file[0]);
 
           tx.exec_params(
               "UPDATE vehicles SET map_id = NULL "
@@ -728,21 +735,53 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
                 sourceType == "pgm-yaml" ? roc::utils::sha256Hex(yamlBytes) : std::string{},
                 sourceMetadata);
             mid = inserted[0][0].as<std::string>();
-            tx.exec_params(
+            const auto previewDigest = roc::utils::sha256Hex(previewBytes);
+            const auto pgmDigest = sourceType == "pgm-yaml"
+                ? roc::utils::sha256Hex(pgmBytes) : std::string{};
+            const auto yamlDigest = sourceType == "pgm-yaml"
+                ? roc::utils::sha256Hex(yamlBytes) : std::string{};
+            const auto packageDigest = roc::utils::sha256Hex(
+                sourceType == "pgm-yaml"
+                    ? "pgm:" + pgmDigest + "\nyaml:" + yamlDigest
+                    : "image:" + previewDigest);
+            const auto packageBytes = sourceType == "pgm-yaml"
+                ? pgmBytes.size() + yamlBytes.size() : previewBytes.size();
+            const auto mapFormat = sourceType == "pgm-yaml"
+                ? std::string{"pgm-yaml"}
+                : (previewContentType == "image/png" ? std::string{"png"}
+                                                       : std::string{"jpeg"});
+            const auto artifact = tx.exec_params(
                 "INSERT INTO map_artifacts "
                 "(map_id, version, storage_key, content_type, byte_size, sha256, image_width, "
-                "image_height, resolution, origin_x, origin_y, origin_theta, created_by) VALUES "
+                "image_height, resolution, origin_x, origin_y, origin_theta, created_by, "
+                "package_version, map_format, coordinate_mode) VALUES "
                 "($1::uuid, 1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::double precision, "
                 "NULLIF($9, '')::double precision, NULLIF($10, '')::double precision, "
-                "NULLIF($11, '')::double precision, $12::uuid)",
-                mid, previewName, previewContentType,
-                static_cast<long long>(previewBytes.size()),
-                roc::utils::sha256Hex(previewBytes), imageWidth, imageHeight,
+                "NULLIF($11, '')::double precision, $12::uuid, 2, $13, $14) RETURNING id::text",
+                mid, previewName, "application/vnd.roc.map-package+json",
+                static_cast<long long>(packageBytes), packageDigest, imageWidth, imageHeight,
                 hasMetricCoordinates ? std::to_string(resolution) : std::string{},
                 hasMetricCoordinates ? std::to_string(originX) : std::string{},
                 hasMetricCoordinates ? std::to_string(originY) : std::string{},
                 hasMetricCoordinates ? std::to_string(originTheta) : std::string{},
-                (*p)["user_id"].asString());
+                (*p)["user_id"].asString(), mapFormat, coordinateMode);
+            const auto artifactId = artifact[0][0].as<std::string>();
+            if (sourceType == "pgm-yaml") {
+              tx.exec_params(
+                  "INSERT INTO map_artifact_files "
+                  "(artifact_id, role, file_name, storage_key, content_type, byte_size, sha256) VALUES "
+                  "($1::uuid, 'pgm', $2, $2, 'image/x-portable-graymap', $3, $4), "
+                  "($1::uuid, 'yaml', $5, $5, 'application/yaml', $6, $7)",
+                  artifactId, pgmName, static_cast<long long>(pgmBytes.size()), pgmDigest,
+                  yamlName, static_cast<long long>(yamlBytes.size()), yamlDigest);
+            } else {
+              tx.exec_params(
+                  "INSERT INTO map_artifact_files "
+                  "(artifact_id, role, file_name, storage_key, content_type, byte_size, sha256) "
+                  "VALUES ($1::uuid, 'image', $2, $2, $3, $4, $5)",
+                  artifactId, previewName, previewContentType,
+                  static_cast<long long>(previewBytes.size()), previewDigest);
+            }
             tx.commit();
           } catch (...) {
             for (const auto &path : savedFiles) std::filesystem::remove(path, ec);
@@ -935,6 +974,13 @@ void registerProjectRoutes(const roc::config::AppConfig &cfg, const std::string 
               "SELECT storage_key FROM map_artifacts WHERE map_id = $1::uuid", mapId);
           for (const auto &artifact : artifacts) {
             storedFiles.push_back(artifact[0].as<std::string>());
+          }
+          const auto packageFiles = tx.exec_params(
+              "SELECT file.storage_key FROM map_artifact_files file "
+              "JOIN map_artifacts artifact ON artifact.id = file.artifact_id "
+              "WHERE artifact.map_id = $1::uuid", mapId);
+          for (const auto &file : packageFiles) {
+            storedFiles.push_back(file[0].as<std::string>());
           }
           for (std::size_t column = 0; column < 3; ++column) {
             if (map[0][column].is_null()) continue;

@@ -69,8 +69,10 @@ bool allowed(roc::db::PostgresClient &pg, const std::string &projectId,
 constexpr const char *kArtifactColumns =
     "a.id, a.map_id, a.version, a.storage_key, a.content_type, a.byte_size, "
     "a.sha256, a.image_width, a.image_height, a.resolution, a.origin_x, "
-    "a.origin_y, a.origin_theta, a.created_by, u.username AS created_by_username, "
-    "a.created_at";
+    "a.origin_y, a.origin_theta, a.package_version, a.map_format, "
+    "a.coordinate_mode, a.created_by, u.username AS created_by_username, "
+    "a.created_at, (SELECT COUNT(*) FROM map_artifact_files f "
+    "WHERE f.artifact_id = a.id) AS file_count";
 
 std::string suffix() {
   std::random_device device;
@@ -144,7 +146,8 @@ void registerMapArtifactRoutes(const roc::config::AppConfig &config,
           if (!allowed(pg, projectId, *account, callback)) return;
           const auto map = pg.queryOneParams(
               "SELECT image_url, resolution, coordinate_origin_x, coordinate_origin_y, "
-              "origin_theta FROM maps WHERE id = $1::uuid AND project_id = $2::uuid",
+              "origin_theta, coordinate_mode FROM maps "
+              "WHERE id = $1::uuid AND project_id = $2::uuid",
               {mapId, projectId});
           if (map.isNull() || map["image_url"].isNull()) {
             callback(response(k404NotFound, error("Map image not found")));
@@ -166,8 +169,9 @@ void registerMapArtifactRoutes(const roc::config::AppConfig &config,
           const auto existing = pg.queryOneParams(
               std::string("SELECT ") + kArtifactColumns +
                   " FROM map_artifacts a LEFT JOIN users u ON u.id = a.created_by "
-                  "WHERE a.map_id = $1::uuid AND a.sha256 = $2 ORDER BY a.version DESC LIMIT 1",
-              {mapId, digest});
+                  "WHERE a.map_id = $1::uuid AND a.sha256 = $2 "
+                  "AND a.package_version = 2 ORDER BY a.version DESC LIMIT 1",
+              {mapId, roc::utils::sha256Hex("image:" + digest)});
           if (!existing.isNull()) {
             Json::Value body;
             body["ok"] = true; body["created"] = false; body["artifact"] = existing;
@@ -183,8 +187,9 @@ void registerMapArtifactRoutes(const roc::config::AppConfig &config,
           if (locked.empty()) { callback(response(k404NotFound, error("Map not found"))); return; }
           const auto duplicate = tx.exec_params(
               "SELECT id::text FROM map_artifacts "
-              "WHERE map_id = $1::uuid AND sha256 = $2 ORDER BY version DESC LIMIT 1",
-              mapId, digest);
+              "WHERE map_id = $1::uuid AND sha256 = $2 AND package_version = 2 "
+              "ORDER BY version DESC LIMIT 1",
+              mapId, roc::utils::sha256Hex("image:" + digest));
           if (!duplicate.empty()) {
             const auto artifactId = duplicate[0][0].as<std::string>();
             tx.commit();
@@ -219,19 +224,29 @@ void registerMapArtifactRoutes(const roc::config::AppConfig &config,
           const auto inserted = tx.exec_params(
               "INSERT INTO map_artifacts "
               "(map_id, version, storage_key, content_type, byte_size, sha256, image_width, "
-              "image_height, resolution, origin_x, origin_y, origin_theta, created_by) VALUES "
+              "image_height, resolution, origin_x, origin_y, origin_theta, created_by, "
+              "package_version, map_format, coordinate_mode) VALUES "
               "($1::uuid, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, '')::double precision, "
               "NULLIF($10, '')::double precision, NULLIF($11, '')::double precision, "
-              "NULLIF($12, '')::double precision, $13::uuid) "
+              "NULLIF($12, '')::double precision, $13::uuid, 2, $14, $15) "
               "RETURNING id::text",
-              mapId, version, fileName, metadata->contentType,
-              static_cast<long long>(bytes->size()), digest, metadata->width, metadata->height,
+              mapId, version, fileName, "application/vnd.roc.map-package+json",
+              static_cast<long long>(bytes->size()), roc::utils::sha256Hex("image:" + digest),
+              metadata->width, metadata->height,
               map["resolution"].isNull() ? std::string{} : map["resolution"].asString(),
               map["coordinate_origin_x"].isNull() ? std::string{} : map["coordinate_origin_x"].asString(),
               map["coordinate_origin_y"].isNull() ? std::string{} : map["coordinate_origin_y"].asString(),
               map["origin_theta"].isNull() ? std::string{} : map["origin_theta"].asString(),
-              (*account)["user_id"].asString());
+              (*account)["user_id"].asString(),
+              metadata->contentType == "image/png" ? "png" : "jpeg",
+              map["coordinate_mode"].asString());
           const auto artifactId = inserted[0][0].as<std::string>();
+          tx.exec_params(
+              "INSERT INTO map_artifact_files "
+              "(artifact_id, role, file_name, storage_key, content_type, byte_size, sha256) "
+              "VALUES ($1::uuid, 'image', $2, $2, $3, $4, $5)",
+              artifactId, fileName, metadata->contentType,
+              static_cast<long long>(bytes->size()), digest);
           tx.commit();
           finalPath.clear();
 

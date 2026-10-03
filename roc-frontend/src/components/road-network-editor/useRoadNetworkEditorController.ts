@@ -14,17 +14,19 @@ import {
   parseRoadNetwork, roadNetworkSignature, validateRoadNetwork, type RoadEdge,
   type RoadNetwork, type RoadNetworkRevision, type RoadNode,
 } from '../../features/road-network/model';
-import { apiRequest } from '../../shared/api/client';
+import { apiBlob, apiRequest } from '../../shared/api/client';
 import { isAbortError } from '../../shared/api/errors';
 import type { EditorSelection as Selection, EditorTool as Tool } from './types';
 
 interface DragState {
   pointerId: number;
-  kind: 'pan' | 'node';
+  kind: 'pan' | 'node' | 'control';
   start: Point;
   initialPan: Point;
   initialNetwork: RoadNetwork;
   nodeId?: string;
+  edgeId?: string;
+  control?: 'control1' | 'control2';
   changed: boolean;
 }
 
@@ -33,8 +35,19 @@ const MAX_HISTORY = 100;
 function cloneNetwork(network: RoadNetwork): RoadNetwork {
   return {
     ...network,
+    sampling: { ...network.sampling },
     nodes: network.nodes.map((node) => ({ ...node })),
-    edges: network.edges.map((edge) => ({ ...edge })),
+    edges: network.edges.map((edge) => ({
+      ...edge,
+      geometry: edge.geometry.type === 'line' ? { type: 'line' } : {
+        type: 'cubic_bezier',
+        control1: { ...edge.geometry.control1 },
+        control2: { ...edge.geometry.control2 },
+      },
+    })),
+    trajectories: network.trajectories.map((trajectory) => ({
+      ...trajectory, points: trajectory.points.map((point) => ({ ...point })),
+    })),
   };
 }
 
@@ -299,7 +312,17 @@ export function useRoadNetworkEditorController() {
       setConnectFrom(null);
       return;
     }
-    const edge: RoadEdge = { id: newId('edge'), from: connectFrom, to: nodeId, direction: 'both', max_speed_mps: null };
+    const fromNode = network.nodes.find((node) => node.id === connectFrom);
+    const toNode = network.nodes.find((node) => node.id === nodeId);
+    if (!fromNode || !toNode) return;
+    const geometry: RoadEdge['geometry'] = tool === 'connect-curve'
+      ? {
+        type: 'cubic_bezier',
+        control1: { x: fromNode.x + (toNode.x - fromNode.x) / 3, y: fromNode.y + (toNode.y - fromNode.y) / 3 },
+        control2: { x: fromNode.x + 2 * (toNode.x - fromNode.x) / 3, y: fromNode.y + 2 * (toNode.y - fromNode.y) / 3 },
+      }
+      : { type: 'line' };
+    const edge: RoadEdge = { id: newId('edge'), from: connectFrom, to: nodeId, direction: 'both', max_speed_mps: null, geometry };
     commit({ ...network, edges: [...network.edges, edge] });
     setSelection({ type: 'edge', id: edge.id });
     setConnectFrom(null);
@@ -308,7 +331,7 @@ export function useRoadNetworkEditorController() {
   const handleNodePointerDown = (event: PointerEvent<SVGCircleElement>, node: RoadNode) => {
     event.stopPropagation();
     workspaceRef.current?.focus();
-    if (tool === 'connect') { connectNode(node.id); return; }
+    if (tool === 'connect' || tool === 'connect-curve') { connectNode(node.id); return; }
     setSelection({ type: 'node', id: node.id });
     if (tool === 'delete') { deleteNodeById(node.id); return; }
     if (tool !== 'select' || event.button !== 0) return;
@@ -324,7 +347,7 @@ export function useRoadNetworkEditorController() {
     };
   };
 
-  const handleEdgePointerDown = (event: PointerEvent<SVGLineElement>, edgeId: string) => {
+  const handleEdgePointerDown = (event: PointerEvent<SVGElement>, edgeId: string) => {
     event.stopPropagation();
     workspaceRef.current?.focus();
     if (tool === 'delete') {
@@ -335,12 +358,32 @@ export function useRoadNetworkEditorController() {
     setSelection({ type: 'edge', id: edgeId });
   };
 
+  const handleControlPointerDown = (
+    event: PointerEvent<SVGCircleElement>, edgeId: string,
+    control: 'control1' | 'control2',
+  ) => {
+    event.stopPropagation();
+    workspaceRef.current?.focus();
+    setSelection({ type: 'edge', id: edgeId });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      kind: 'control',
+      start: { x: event.clientX, y: event.clientY },
+      initialPan: pan,
+      initialNetwork: cloneNetwork(network),
+      edgeId,
+      control,
+      changed: false,
+    };
+  };
+
   const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
     workspaceRef.current?.focus();
     if (event.button !== 0 && event.button !== 1) return;
     if (tool === 'add-node' && event.button === 0) { addNode(localPoint(event)); return; }
     if (tool === 'select') setSelection(null);
-    if (tool === 'connect') setConnectFrom(null);
+    if (tool === 'connect' || tool === 'connect-curve') setConnectFrom(null);
     if (tool === 'pan' || event.button === 1 || tool === 'select') {
       event.currentTarget.setPointerCapture(event.pointerId);
       dragRef.current = {
@@ -362,18 +405,27 @@ export function useRoadNetworkEditorController() {
       return;
     }
     const position = worldPoint(localPoint(event));
-    if (!position || !drag.nodeId) return;
+    if (!position) return;
     drag.changed = true;
-    setNetwork((current) => ({
-      ...current,
-      nodes: current.nodes.map((node) => node.id === drag.nodeId ? { ...node, x: position.x, y: position.y } : node),
-    }));
+    if (drag.kind === 'node' && drag.nodeId) {
+      setNetwork((current) => ({
+        ...current,
+        nodes: current.nodes.map((node) => node.id === drag.nodeId ? { ...node, x: position.x, y: position.y } : node),
+      }));
+    } else if (drag.kind === 'control' && drag.edgeId && drag.control) {
+      setNetwork((current) => ({
+        ...current,
+        edges: current.edges.map((edge) => edge.id === drag.edgeId && edge.geometry.type === 'cubic_bezier'
+          ? { ...edge, geometry: { ...edge.geometry, [drag.control!]: position } }
+          : edge),
+      }));
+    }
   };
 
   const finishPointer = (event: PointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    if (drag.kind === 'node' && drag.changed) {
+    if ((drag.kind === 'node' || drag.kind === 'control') && drag.changed) {
       setPast((items) => [...items, drag.initialNetwork].slice(-MAX_HISTORY));
       setFuture([]);
     }
@@ -506,6 +558,58 @@ export function useRoadNetworkEditorController() {
     ...current,
     edges: current.edges.map((edge) => edge.id === selectedEdge.id ? { ...edge, max_speed_mps: maxSpeed } : edge),
   }));
+  const changeEdgeGeometry = (type: 'line' | 'cubic_bezier') => {
+    if (!selectedEdge || selectedEdge.geometry.type === type) return;
+    const from = network.nodes.find((node) => node.id === selectedEdge.from);
+    const to = network.nodes.find((node) => node.id === selectedEdge.to);
+    if (!from || !to) return;
+    commit({
+      ...network,
+      edges: network.edges.map((edge) => edge.id !== selectedEdge.id ? edge : {
+        ...edge,
+        geometry: type === 'line' ? { type: 'line' } : {
+          type: 'cubic_bezier',
+          control1: { x: from.x + (to.x - from.x) / 3, y: from.y + (to.y - from.y) / 3 },
+          control2: { x: from.x + 2 * (to.x - from.x) / 3, y: from.y + 2 * (to.y - from.y) / 3 },
+        },
+      }),
+    });
+  };
+  const changeEdgeControl = (control: 'control1' | 'control2', axis: 'x' | 'y', value: number) => {
+    if (!selectedEdge || selectedEdge.geometry.type !== 'cubic_bezier' || !Number.isFinite(value)) return;
+    setNetwork((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => edge.id === selectedEdge.id && edge.geometry.type === 'cubic_bezier'
+        ? { ...edge, geometry: { ...edge.geometry, [control]: { ...edge.geometry[control], [axis]: value } } }
+        : edge),
+    }));
+  };
+  const changeSamplingSpacing = (spacing: number) => {
+    if (!Number.isFinite(spacing) || spacing <= 0) return;
+    commit({ ...network, sampling: { ...network.sampling, spacing } });
+  };
+
+  const downloadRevision = async (format: 'editor' | 'trajectory') => {
+    if (!projectId || !mapId || !currentRevision) return;
+    setError('');
+    try {
+      const suffix = format === 'editor' ? 'editor.json' : 'trajectory.csv';
+      const blob = await apiBlob(
+        `/api/projects/${projectId}/maps/${mapId}/road-network/revisions/${currentRevision.id}/export/${suffix}`,
+        { token },
+      );
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = format === 'editor'
+        ? `road-network-v${currentRevision.version}.json`
+        : `road-network-v${currentRevision.version}-trajectory.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : '导出失败');
+    }
+  };
 
   return {
     projectId, mapId, token, map, network, revisions, currentRevisionId, currentRevision,
@@ -517,7 +621,8 @@ export function useRoadNetworkEditorController() {
     undo, redo, exitEditor, saveRevision, loadRevision, deleteSelection,
     changeTool, zoomIn, zoomOut, fit,
     handlePointerDown, handlePointerMove, finishPointer, handleWheel,
-    handleNodePointerDown, handleEdgePointerDown, handleKeyDown,
+    handleNodePointerDown, handleEdgePointerDown, handleControlPointerDown, handleKeyDown,
     beginPropertyEdit, finishPropertyEdit, changeNodeLabel, changeEdgeDirection, changeEdgeSpeed,
+    changeEdgeGeometry, changeEdgeControl, changeSamplingSpacing, downloadRevision,
   };
 }

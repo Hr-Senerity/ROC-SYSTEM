@@ -203,8 +203,10 @@ export function RoadNetworkDeployDialog({
         </DialogHeader>
 
         <div className="min-h-0 overflow-y-auto px-6 py-5">
-          <div className="grid gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm sm:grid-cols-3">
+          <div className="grid gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm sm:grid-cols-3 lg:grid-cols-5">
             <div><span className="block text-xs text-blue-700">目标版本</span><strong className="text-blue-950">v{revision.version}</strong></div>
+            <div><span className="block text-xs text-blue-700">资源合同</span><strong className="text-blue-950">road v{revision.schemaVersion}</strong></div>
+            <div><span className="block text-xs text-blue-700">确定性轨迹</span><strong className="text-blue-950">{revision.trajectoryCount} 条 · {revision.sampleCount} 点{revision.samplingSpacing !== null ? ` · ${revision.samplingSpacing}` : ''}</strong></div>
             <div><span className="block text-xs text-blue-700">内容大小</span><strong className="text-blue-950">{formatKilobytes(revision.byteSize)}</strong></div>
             <div className="min-w-0"><span className="block text-xs text-blue-700">SHA-256</span><strong className="block truncate font-mono text-blue-950" title={revision.sha256}>{revision.sha256}</strong></div>
           </div>

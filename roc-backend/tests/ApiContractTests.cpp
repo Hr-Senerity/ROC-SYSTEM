@@ -58,6 +58,12 @@ void validateJsonSchemas() {
           "Road-network schema version must remain 1");
   require(road["$defs"].isMember("node") && road["$defs"].isMember("edge"),
           "Road-network schema must define nodes and edges");
+  const auto roadV2 = readJson("road-network-v2.schema.json");
+  require(roadV2["properties"]["schema_version"]["const"].asInt() == 2,
+          "Road-network v2 schema version must be 2");
+  require(roadV2["$defs"].isMember("geometry") &&
+              roadV2["$defs"].isMember("trajectory"),
+          "Road-network v2 must define curve geometry and deterministic trajectories");
 
   const auto deployment = readJson("deployment-task-v1.schema.json");
   for (const auto *definition : {"taskAvailable", "statusRequest",
@@ -108,6 +114,8 @@ void validateOpenApi() {
       {"/api/projects/{projectId}/maps/{mapId}/road-network/revisions", "get"},
       {"/api/projects/{projectId}/maps/{mapId}/road-network/revisions", "post"},
       {"/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}", "get"},
+      {"/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}/export/editor.json", "get"},
+      {"/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}/export/trajectory.csv", "get"},
       {"/api/vehicles", "get"},
       {"/api/vehicles", "post"},
       {"/api/vehicles/{id}", "patch"},
@@ -121,6 +129,7 @@ void validateOpenApi() {
       {"/api/device/tasks/{taskId}/accept", "post"},
       {"/api/device/tasks/{taskId}/manifest", "get"},
       {"/api/device/tasks/{taskId}/artifact", "get"},
+      {"/api/device/tasks/{taskId}/artifact/{fileId}", "get"},
       {"/api/device/tasks/{taskId}/status", "post"},
       {"/api/admin/users", "get"},
       {"/api/admin/users/{id}", "get"},

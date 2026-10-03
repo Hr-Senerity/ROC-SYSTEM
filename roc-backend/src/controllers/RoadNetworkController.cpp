@@ -136,7 +136,16 @@ void registerRoadNetworkRoutes(const roc::config::AppConfig &config,
           const auto revisions = postgres.queryParams(
               "SELECT r.id::text, r.map_id::text, r.version, r.schema_version, "
               "r.content_type, r.byte_size, r.sha256, r.created_by::text, "
-              "u.username AS created_by_username, r.created_at "
+              "u.username AS created_by_username, r.created_at, "
+              "CASE WHEN r.schema_version = 2 THEN "
+              "jsonb_array_length(r.network->'trajectories') ELSE 0 END "
+              "AS trajectory_count, "
+              "CASE WHEN r.schema_version = 2 THEN COALESCE((SELECT "
+              "SUM(jsonb_array_length(trajectory->'points')) FROM "
+              "jsonb_array_elements(r.network->'trajectories') trajectory), 0) "
+              "ELSE 0 END AS sample_count, "
+              "r.network#>>'{sampling,algorithm}' AS sampling_algorithm, "
+              "r.network#>>'{sampling,spacing}' AS sampling_spacing "
               "FROM road_network_revisions r "
               "LEFT JOIN users u ON u.id = r.created_by "
               "WHERE r.map_id = $1::uuid ORDER BY r.version DESC",
@@ -209,6 +218,84 @@ void registerRoadNetworkRoutes(const roc::config::AppConfig &config,
       {Get, Options});
 
   app().registerHandler(
+      "/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}/export/editor.json",
+      [connStr, jwtSecret](const HttpRequestPtr &request,
+                           std::function<void(const HttpResponsePtr &)> &&callback,
+                           const std::string &projectId, const std::string &mapId,
+                           const std::string &revisionId) {
+        const auto account = principal(request, jwtSecret);
+        if (!account) { callback(jsonResponse(k401Unauthorized, errorBody("unauthorized", "Unauthorized"))); return; }
+        if (!requireUuid(projectId, "project_id", callback) ||
+            !requireUuid(mapId, "map_id", callback) ||
+            !requireUuid(revisionId, "revision_id", callback)) return;
+        try {
+          roc::db::PostgresClient postgres(connStr);
+          if (respondForAccess(projectAccess(postgres, projectId, *account), callback)) return;
+          const auto revision = revisionById(postgres, revisionId);
+          if (revision.isNull() || revision["map_id"].asString() != mapId) {
+            callback(jsonResponse(k404NotFound, errorBody("revision_not_found", "Road network revision not found")));
+            return;
+          }
+          const auto exported = roc::service::validateRoadNetwork(
+              revision["network"], revision["network"]["coordinate_mode"].asString());
+          if (!exported.ok) {
+            callback(jsonResponse(k409Conflict, errorBody("invalid_revision", "Stored road network cannot be exported")));
+            return;
+          }
+          auto response = HttpResponse::newHttpResponse();
+          response->setBody(exported.canonicalJson);
+          response->setContentTypeString("application/json; charset=utf-8");
+          response->addHeader("Content-Disposition", "attachment; filename=road-network-v" +
+              std::to_string(revision["version"].asInt()) + ".json");
+          response->addHeader("X-Content-SHA256", revision["sha256"].asString());
+          response->addHeader("Cache-Control", "no-store");
+          callback(response);
+        } catch (const std::exception &error) {
+          LOG_ERROR << "Export road network editor data: " << error.what();
+          callback(jsonResponse(k500InternalServerError, errorBody("internal_error", "Unable to export road network")));
+        }
+      },
+      {Get, Options});
+
+  app().registerHandler(
+      "/api/projects/{projectId}/maps/{mapId}/road-network/revisions/{revisionId}/export/trajectory.csv",
+      [connStr, jwtSecret](const HttpRequestPtr &request,
+                           std::function<void(const HttpResponsePtr &)> &&callback,
+                           const std::string &projectId, const std::string &mapId,
+                           const std::string &revisionId) {
+        const auto account = principal(request, jwtSecret);
+        if (!account) { callback(jsonResponse(k401Unauthorized, errorBody("unauthorized", "Unauthorized"))); return; }
+        if (!requireUuid(projectId, "project_id", callback) ||
+            !requireUuid(mapId, "map_id", callback) ||
+            !requireUuid(revisionId, "revision_id", callback)) return;
+        try {
+          roc::db::PostgresClient postgres(connStr);
+          if (respondForAccess(projectAccess(postgres, projectId, *account), callback)) return;
+          const auto revision = revisionById(postgres, revisionId);
+          if (revision.isNull() || revision["map_id"].asString() != mapId) {
+            callback(jsonResponse(k404NotFound, errorBody("revision_not_found", "Road network revision not found")));
+            return;
+          }
+          const auto csv = roc::service::roadNetworkTrajectoryCsv(revision["network"]);
+          if (csv.empty()) {
+            callback(jsonResponse(k409Conflict, errorBody("trajectory_unavailable", "This revision does not contain deterministic trajectories")));
+            return;
+          }
+          auto response = HttpResponse::newHttpResponse();
+          response->setBody(csv);
+          response->setContentTypeString("text/csv; charset=utf-8");
+          response->addHeader("Content-Disposition", "attachment; filename=road-network-v" +
+              std::to_string(revision["version"].asInt()) + "-trajectory.csv");
+          response->addHeader("Cache-Control", "no-store");
+          callback(response);
+        } catch (const std::exception &error) {
+          LOG_ERROR << "Export road network trajectory: " << error.what();
+          callback(jsonResponse(k500InternalServerError, errorBody("internal_error", "Unable to export trajectory")));
+        }
+      },
+      {Get, Options});
+
+  app().registerHandler(
       "/api/projects/{projectId}/maps/{mapId}/road-network/revisions",
       [connStr, jwtSecret](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
@@ -273,9 +360,13 @@ void registerRoadNetworkRoutes(const roc::config::AppConfig &config,
           const auto version = versionRows[0]["next_version"].as<int>();
           const auto inserted = transaction.exec_params(
               "INSERT INTO road_network_revisions "
-              "(map_id, version, schema_version, network, byte_size, sha256, created_by) "
-              "VALUES ($1::uuid, $2, 1, $3::jsonb, $4, $5, $6::uuid) RETURNING id::text",
-              mapId, version, validation.canonicalJson,
+              "(map_id, version, schema_version, network, content_type, byte_size, sha256, created_by) "
+              "VALUES ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8::uuid) RETURNING id::text",
+              mapId, version, validation.normalized["schema_version"].asInt(),
+              validation.canonicalJson,
+              validation.normalized["schema_version"].asInt() == 2
+                  ? "application/vnd.roc.road-network.v2+json"
+                  : "application/vnd.roc.road-network+json",
               static_cast<long long>(validation.canonicalJson.size()), digest,
               (*account)["user_id"].asString());
           const auto revisionId = inserted[0][0].as<std::string>();

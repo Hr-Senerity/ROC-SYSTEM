@@ -24,7 +24,8 @@ interface MapEditorProps {
   onPointerFinish: (event: PointerEvent<SVGSVGElement>) => void;
   onWheel: (event: WheelEvent<SVGSVGElement>) => void;
   onNodePointerDown: (event: PointerEvent<SVGCircleElement>, node: RoadNode) => void;
-  onEdgePointerDown: (event: PointerEvent<SVGLineElement>, edgeId: string) => void;
+  onEdgePointerDown: (event: PointerEvent<SVGElement>, edgeId: string) => void;
+  onControlPointerDown: (event: PointerEvent<SVGCircleElement>, edgeId: string, control: 'control1' | 'control2') => void;
 }
 
 export function MapEditor(props: MapEditorProps) {
@@ -32,12 +33,12 @@ export function MapEditor(props: MapEditorProps) {
     viewportRef, mapName, mapImageSrc, mapImageError, network, selection,
     connectFrom, tool, imageSize, coordinateMetadata, transform, scale, zoom,
     onPointerDown, onPointerMove, onPointerFinish, onWheel,
-    onNodePointerDown, onEdgePointerDown,
+    onNodePointerDown, onEdgePointerDown, onControlPointerDown,
   } = props;
   const cursor = tool === 'pan'
     ? 'cursor-grab active:cursor-grabbing'
     : tool === 'add-node' ? 'cursor-crosshair' : 'cursor-default';
-  const hint = tool === 'connect'
+  const hint = tool === 'connect' || tool === 'connect-curve'
     ? (connectFrom ? '请选择终点；Esc 取消' : '请选择连边起点')
     : tool === 'add-node' ? '点击地图添加节点' : '中键或“平移”工具拖动画布';
 
@@ -63,7 +64,7 @@ export function MapEditor(props: MapEditorProps) {
           {mapImageSrc
             ? <image href={mapImageSrc} width={imageSize.width} height={imageSize.height} preserveAspectRatio="none" />
             : <text x={imageSize.width / 2} y={imageSize.height / 2} textAnchor="middle" fill="#64748b" fontSize={16 / scale}>{mapImageError || '正在加载地图…'}</text>}
-          <EdgeLayer network={network} selection={selection} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onEdgePointerDown} />
+          <EdgeLayer network={network} selection={selection} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onEdgePointerDown} onControlPointerDown={onControlPointerDown} />
           <NodeLayer network={network} selection={selection} connectFrom={connectFrom} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onNodePointerDown} />
         </g>
       </svg>

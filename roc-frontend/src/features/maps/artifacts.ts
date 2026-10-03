@@ -5,8 +5,16 @@ export interface MapArtifact {
   contentType: string;
   byteSize: number;
   sha256: string;
+  packageVersion: number;
+  mapFormat: string | null;
+  coordinateMode: string | null;
+  fileCount: number;
   imageWidth: number | null;
   imageHeight: number | null;
+  resolution: number | null;
+  originX: number | null;
+  originY: number | null;
+  originTheta: number | null;
   createdAt: string;
 }
 
@@ -41,8 +49,16 @@ export function parseMapArtifact(value: unknown): MapArtifact {
     contentType: stringValue(source.content_type, '地图制品类型无效'),
     byteSize: numberValue(source.byte_size, '地图制品大小无效'),
     sha256: stringValue(source.sha256, '地图制品摘要无效'),
+    packageVersion: nullableNumber(source.package_version) ?? 1,
+    mapFormat: typeof source.map_format === 'string' ? source.map_format : null,
+    coordinateMode: typeof source.coordinate_mode === 'string' ? source.coordinate_mode : null,
+    fileCount: nullableNumber(source.file_count) ?? 1,
     imageWidth: nullableNumber(source.image_width),
     imageHeight: nullableNumber(source.image_height),
+    resolution: nullableNumber(source.resolution),
+    originX: nullableNumber(source.origin_x),
+    originY: nullableNumber(source.origin_y),
+    originTheta: nullableNumber(source.origin_theta),
     createdAt: stringValue(source.created_at, '地图制品创建时间无效'),
   };
 }

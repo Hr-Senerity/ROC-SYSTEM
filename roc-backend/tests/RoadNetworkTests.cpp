@@ -38,6 +38,20 @@ Json::Value validNetwork() {
   return network;
 }
 
+Json::Value validCurvedNetwork() {
+  auto network = validNetwork();
+  network["schema_version"] = 2;
+  network["sampling"]["algorithm"] = "uniform-parameter-v1";
+  network["sampling"]["spacing"] = 0.25;
+  network["sampling"]["precision"] = 6;
+  network["edges"][0]["geometry"]["type"] = "cubic_bezier";
+  network["edges"][0]["geometry"]["control1"]["x"] = 1.25;
+  network["edges"][0]["geometry"]["control1"]["y"] = 2.5;
+  network["edges"][0]["geometry"]["control2"]["x"] = 1.75;
+  network["edges"][0]["geometry"]["control2"]["y"] = 3.5;
+  return network;
+}
+
 }  // namespace
 
 int main() {
@@ -72,6 +86,26 @@ int main() {
   result = roc::service::validateRoadNetwork(selfLoop, "metric");
   assert(!result.ok);
   assert(result.code == "self_loop");
+
+  const auto curved = validCurvedNetwork();
+  const auto first = roc::service::validateRoadNetwork(curved, "metric");
+  const auto second = roc::service::validateRoadNetwork(curved, "metric");
+  assert(first.ok && second.ok);
+  assert(first.canonicalJson == second.canonicalJson);
+  assert(first.normalized["schema_version"].asInt() == 2);
+  assert(first.normalized["trajectories"].size() == 2);
+  assert(first.normalized["trajectories"][0]["points"].size() >= 2);
+  assert(first.normalized["trajectories"][0]["points"][0]["x"].asDouble() == 1.0);
+  assert(first.normalized["trajectories"][1]["points"][0]["x"].asDouble() == 2.0);
+  const auto csv = roc::service::roadNetworkTrajectoryCsv(first.normalized);
+  assert(csv.find("trajectory_id,edge_id,direction,point_index") == 0);
+  assert(csv.find("edge-a:forward") != std::string::npos);
+  assert(csv.find("edge-a:reverse") != std::string::npos);
+
+  auto invalidGeometry = validCurvedNetwork();
+  invalidGeometry["edges"][0]["geometry"]["control1"]["x"] = "nan";
+  result = roc::service::validateRoadNetwork(invalidGeometry, "metric");
+  assert(!result.ok && result.code == "invalid_geometry");
 
   std::cout << "RoadNetworkTests passed\n";
   return 0;

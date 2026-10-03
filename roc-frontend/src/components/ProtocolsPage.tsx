@@ -15,14 +15,17 @@ const credentialEndpoints = [
 const taskEndpoints = [
   { method: 'POST', path: '/api/device/tasks/{task_id}/accept', purpose: '接受任务并取得 30 分钟租约；重复接受返回同一租约' },
   { method: 'GET', path: '/api/device/tasks/{task_id}/manifest', purpose: '读取资源类型、版本、大小、SHA-256 和制品地址' },
-  { method: 'GET', path: '/api/device/tasks/{task_id}/artifact', purpose: '完整下载道路 JSON 或原始地图图片；携带 Range 返回 416' },
+  { method: 'GET', path: '/api/device/tasks/{task_id}/artifact', purpose: '完整下载路网 JSON 或旧版单文件地图制品；携带 Range 返回 416' },
+  { method: 'GET', path: '/api/device/tasks/{task_id}/artifact/{file_id}', purpose: '按 manifest 文件 ID 下载地图包 v2 的原始图片，或 PGM 与 YAML 文件' },
   { method: 'POST', path: '/api/device/tasks/{task_id}/status', purpose: '幂等回报下载、交付、完成或失败状态' },
 ] as const;
 
 const accountTaskEndpoints = [
-  { method: 'POST', path: '/api/projects/{project_id}/maps/upload', purpose: 'multipart 导入普通/人工标定 PNG/JPEG，或成对 PGM+YAML，并自动创建不可变预览地图 v1 制品' },
-  { method: 'GET', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '列出地图制品版本、MIME、大小、尺寸和 SHA-256' },
-  { method: 'POST', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '把旧地图当前原图幂等固化为不可变制品版本' },
+  { method: 'POST', path: '/api/projects/{project_id}/maps/upload', purpose: 'multipart 导入普通/人工标定 PNG/JPEG，或成对 PGM+YAML，并创建不可变地图包 v2' },
+  { method: 'GET', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '列出地图包版本、格式、坐标模式、文件数、大小和 SHA-256' },
+  { method: 'POST', path: '/api/projects/{project_id}/maps/{map_id}/artifacts', purpose: '把旧地图当前原图幂等固化为单文件地图包 v2' },
+  { method: 'GET', path: '/api/projects/{project_id}/maps/{map_id}/road-network/revisions/{revision_id}/export/editor.json', purpose: '导出语义拓扑、曲线定义、采样配置和持久化轨迹点' },
+  { method: 'GET', path: '/api/projects/{project_id}/maps/{map_id}/road-network/revisions/{revision_id}/export/trajectory.csv', purpose: '导出与设备下发逐点一致的确定性离散轨迹 CSV' },
   { method: 'POST', path: '/api/projects/{project_id}/deployments', purpose: '账户按不可变资源版本和车辆列表创建批次' },
   { method: 'GET', path: '/api/projects/{project_id}/deployments/{batch_id}', purpose: '读取批次与逐车任务状态' },
   { method: 'POST', path: '/api/projects/{project_id}/deployments/{batch_id}/cancel', purpose: '取消尚未进入最终交付阶段的任务' },
@@ -375,8 +378,9 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                   <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
                     <li><code>event_id</code> 全局唯一；同一事件重试返回当前任务，不重复写事件。</li>
                     <li>租约为 30 分钟；接受/下载阶段超时且未超过三次可重新投递，交付中超时进入失败。</li>
-                    <li>道路制品返回 JSON；地图制品返回平台上传的原始图片。响应头 <code>X-Content-SHA256</code> 与 manifest 一致。</li>
-                    <li>制品只支持完整下载，携带 <code>Range</code> 会返回 416；车端必须校验字节数、MIME 和 SHA-256，截断或哈希不匹配时回报 <code>failed</code>。</li>
+                    <li>路网 v2 JSON 同时包含语义拓扑、直线/三次贝塞尔曲线定义和服务器生成的确定性轨迹点；编辑 JSON、轨迹 CSV 与设备 artifact 均来自同一不可变 revision。</li>
+                    <li>地图包 v2 的 manifest 列出一到多个文件。PNG/JPEG 为单个原图；PGM+YAML 保持两个原始文件，并携带地图格式、坐标模式、resolution 和 origin。</li>
+                    <li>制品只支持完整下载，携带 <code>Range</code> 会返回 416；车端须逐文件校验字节数、MIME 和 SHA-256，截断或哈希不匹配时回报 <code>failed</code>。</li>
                     <li>平台“已送达”只表示车端已校验并保存/交给本地适配器，不表示地图已被车辆加载或应用。</li>
                   </ul>
                 </section>
@@ -420,7 +424,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
 
             <aside className="mt-8 flex gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
               <Braces className="mt-0.5 size-5 shrink-0 text-blue-700" aria-hidden="true" />
-              <p><strong className="text-slate-950">机器可读合同：</strong> REST API 见 <code>roc-backend/schemas/openapi-v1.json</code>；设备通信、路网与下发任务分别见同目录下的三份 v1 JSON Schema。</p>
+              <p><strong className="text-slate-950">机器可读合同：</strong> REST API 见 <code>roc-backend/schemas/openapi-v1.json</code>；设备通信、路网 v1/v2 与下发任务分别见同目录 JSON Schema。路网 v2 的采样算法固定为 <code>uniform-parameter-v1</code>、精度固定为 6 位。</p>
             </aside>
 
             <aside className="mt-4 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
