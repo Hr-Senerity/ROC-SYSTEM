@@ -33,7 +33,7 @@ VehicleUpdateResult duplicateOrUnauthorized(
     const roc::db::PostgresClient &postgres,
     const std::string &vehicleId,
     const std::string &deviceTokenHash,
-    std::uint64_t clientSequence) {
+    std::int64_t clientSequence) {
   const auto vehicle = postgres.queryOneParams(
       std::string("SELECT ") + kVehicleColumns +
           ", device_last_sequence::text AS device_last_sequence "
@@ -47,7 +47,7 @@ VehicleUpdateResult duplicateOrUnauthorized(
   }
 
   try {
-    const auto stored = std::stoull(vehicle["device_last_sequence"].asString());
+    const auto stored = std::stoll(vehicle["device_last_sequence"].asString());
     if (clientSequence <= stored) {
       return {VehicleUpdateOutcome::Duplicate, vehicle, {}};
     }
@@ -88,7 +88,7 @@ std::optional<Json::Value> updateConnectionState(
 VehicleUpdateResult VehicleStatusService::applyTelemetry(
     const std::string &connStr,
     const roc::protocol::RobotStatus &status,
-    std::uint64_t clientSequence,
+    std::int64_t clientSequence,
     int protocolVersion,
     const std::string &libraryVersion,
     const std::string &deviceTokenHash) {
@@ -149,7 +149,7 @@ VehicleUpdateResult VehicleStatusService::applyTelemetry(
 VehicleUpdateResult VehicleStatusService::applyHeartbeat(
     const std::string &connStr,
     const std::string &vehicleId,
-    std::uint64_t clientSequence,
+    std::int64_t clientSequence,
     int protocolVersion,
     const std::string &libraryVersion,
     const std::string &deviceTokenHash) {

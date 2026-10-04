@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -13,11 +14,13 @@ namespace roc::protocol {
 
 inline constexpr int kDeviceProtocolVersion = 1;
 inline constexpr std::size_t kMaxDeviceMessageBytes = 64 * 1024;
+inline constexpr std::int64_t kMaxProtocolSequence =
+    std::numeric_limits<std::int64_t>::max();
 
 struct DeviceEnvelope {
   std::string messageId;
   std::string type;
-  std::uint64_t sequence{0};
+  std::int64_t sequence{0};
   std::string timestamp;
   Json::Value payload{Json::objectValue};
 };
@@ -42,16 +45,16 @@ std::string optionalLibraryVersion(
 
 Json::Value makeDeviceMessage(
     const std::string &type,
-    std::uint64_t serverSequence,
+    std::int64_t serverSequence,
     const Json::Value &payload = Json::Value(Json::objectValue));
 
 Json::Value makeDeviceAck(
-    std::uint64_t serverSequence,
+    std::int64_t serverSequence,
     const DeviceEnvelope &envelope,
     bool duplicate = false);
 
 Json::Value makeDeviceError(
-    std::uint64_t serverSequence,
+    std::int64_t serverSequence,
     const std::string &code,
     const std::string &message,
     const std::string &messageId = "");

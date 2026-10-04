@@ -2,10 +2,25 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://roc.example/schemas/deployment-task-v1.schema.json",
   "title": "ROC Deployment Task Protocol v1",
+  "x-roc-state-machine": {
+    "attempt": "Starts at 0 and increments exactly once when a new lease is accepted. Replaying a live accept does not increment it.",
+    "progress": "Persists across attempts and is monotonic for the lifetime of a task.",
+    "expired_lease": "Cannot authorize artifact access or a new status transition. A retry receives a new lease and a higher attempt after the task is offered again.",
+    "event_replay": "A recorded event_id is replayable only with the same normalized status body and the lease that originally created it. Exact replay may be acknowledged after terminal state or lease expiry and never mutates task state again.",
+    "normalization": "The identity body always contains event_id, state and progress; event_id UUID hex is normalized to lowercase; empty optional error fields are equivalent to omission."
+  },
   "oneOf": [
     { "$ref": "#/$defs/taskAvailable" },
     { "$ref": "#/$defs/statusRequest" },
-    { "$ref": "#/$defs/manifestResponse" }
+    { "$ref": "#/$defs/acceptResponse" },
+    { "$ref": "#/$defs/statusResponse" },
+    { "$ref": "#/$defs/manifestResponse" },
+    { "$ref": "#/$defs/deviceBadRequestError" },
+    { "$ref": "#/$defs/deviceUnauthorizedError" },
+    { "$ref": "#/$defs/deviceNotFoundError" },
+    { "$ref": "#/$defs/deviceConflictError" },
+    { "$ref": "#/$defs/deviceRangeError" },
+    { "$ref": "#/$defs/deviceServerError" }
   ],
   "$defs": {
     "uuid": {
@@ -14,6 +29,121 @@
     },
     "resourceType": {
       "enum": ["road_network", "map"]
+    },
+    "positiveInt64String": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 19,
+      "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])$",
+      "description": "Canonical decimal string in 1..9223372036854775807; leading zeroes are forbidden."
+    },
+    "taskState": {
+      "enum": [
+        "queued", "offered", "accepted", "downloading", "delivering",
+        "delivered", "failed", "canceled", "expired"
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id", "batch_id", "vehicle_id", "state", "attempt",
+        "max_attempts", "progress", "error_code", "error_message",
+        "offered_at", "accepted_at", "delivered_at", "updated_at"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "batch_id": { "$ref": "#/$defs/uuid" },
+        "vehicle_id": { "$ref": "#/$defs/uuid" },
+        "state": { "$ref": "#/$defs/taskState" },
+        "attempt": { "type": "integer", "minimum": 0 },
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "error_code": { "type": ["string", "null"], "maxLength": 64 },
+        "error_message": { "type": ["string", "null"], "maxLength": 512 },
+        "offered_at": { "type": ["string", "null"], "format": "date-time" },
+        "accepted_at": { "type": ["string", "null"], "format": "date-time" },
+        "delivered_at": { "type": ["string", "null"], "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "description": "Known task fields are frozen; additive task fields are allowed for forward compatibility."
+    },
+    "acceptResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ok", "replayed", "lease_token", "lease_expires_at", "task"],
+      "properties": {
+        "ok": { "const": true },
+        "replayed": { "type": "boolean" },
+        "lease_token": { "type": "string", "minLength": 16 },
+        "lease_expires_at": { "type": "integer", "minimum": 1 },
+        "task": { "$ref": "#/$defs/task" }
+      }
+    },
+    "statusResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ok", "replayed", "project_id", "task"],
+      "properties": {
+        "ok": { "const": true },
+        "replayed": { "type": "boolean" },
+        "project_id": { "$ref": "#/$defs/uuid" },
+        "task": { "$ref": "#/$defs/task" }
+      }
+    },
+    "deviceErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "code", "message"],
+      "properties": {
+        "ok": { "const": false },
+        "code": { "type": "string" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "deviceBadRequestError": {
+      "allOf": [
+        { "$ref": "#/$defs/deviceErrorResponse" },
+        { "properties": { "code": { "enum": [
+          "invalid_id", "invalid_json", "unknown_field",
+          "invalid_status_state", "invalid_progress", "invalid_error_code",
+          "invalid_error_message", "error_code_required"
+        ] } } }
+      ]
+    },
+    "deviceUnauthorizedError": {
+      "allOf": [
+        { "$ref": "#/$defs/deviceErrorResponse" },
+        { "properties": { "code": { "enum": ["authentication_failed", "invalid_lease"] } } }
+      ]
+    },
+    "deviceNotFoundError": {
+      "allOf": [
+        { "$ref": "#/$defs/deviceErrorResponse" },
+        { "properties": { "code": { "enum": ["task_not_found", "artifact_not_found"] } } }
+      ]
+    },
+    "deviceConflictError": {
+      "allOf": [
+        { "$ref": "#/$defs/deviceErrorResponse" },
+        { "properties": { "code": { "enum": [
+          "invalid_state", "lease_expired", "lease_conflict",
+          "attempts_exhausted", "event_conflict", "invalid_transition",
+          "file_id_required"
+        ] } } }
+      ]
+    },
+    "deviceRangeError": {
+      "allOf": [
+        { "$ref": "#/$defs/deviceErrorResponse" },
+        { "properties": { "code": { "const": "range_not_supported" } } }
+      ]
+    },
+    "deviceServerError": {
+      "allOf": [
+        { "$ref": "#/$defs/deviceErrorResponse" },
+        { "properties": { "code": { "const": "internal_error" } } }
+      ]
     },
     "taskAvailable": {
       "type": "object",
@@ -26,17 +156,15 @@
         "protocol_version": { "const": 1 },
         "message_id": { "$ref": "#/$defs/uuid" },
         "type": { "const": "task.available" },
-        "sequence": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]*$"
-        },
+        "sequence": { "$ref": "#/$defs/positiveInt64String" },
         "timestamp": {
           "type": "string",
           "format": "date-time"
         },
         "payload": {
           "type": "object",
-          "additionalProperties": false,
+          "additionalProperties": true,
+          "description": "Required task fields are frozen; additive payload fields are allowed for forward compatibility.",
           "required": [
             "task_id", "batch_id", "project_id", "resource_type",
             "resource_revision_id", "attempt", "max_attempts"
@@ -75,7 +203,35 @@
           "type": "string",
           "maxLength": 512
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["state"],
+            "properties": { "state": { "const": "delivered" } }
+          },
+          "then": {
+            "properties": { "progress": { "const": 100 } }
+          }
+        },
+        {
+          "if": {
+            "required": ["state"],
+            "properties": { "state": { "const": "failed" } }
+          },
+          "then": {
+            "required": ["error_code"],
+            "properties": {
+              "error_code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      ],
+      "description": "event_id is a durable idempotency key. Reuse with a different normalized body returns event_conflict; reuse with a different lease returns invalid_lease."
     },
     "manifestResponse": {
       "type": "object",

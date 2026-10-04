@@ -42,9 +42,18 @@ const envelopeFields = [
   ['protocol_version', 'integer', '固定为 1', '协议主版本；不支持的版本会被拒绝'],
   ['message_id', 'UUID string', '必填', '本条消息的幂等标识'],
   ['type', 'string', '必填', '当前设备上行支持 heartbeat / telemetry'],
-  ['sequence', 'decimal string', '必填且大于 0', '设备持久递增序列；服务端跨重连拒绝重复写入'],
+  ['sequence', 'decimal string', '1..9223372036854775807', '无前导零的正 INT64；设备持久递增，服务端跨重连拒绝重复写入'],
   ['timestamp', 'RFC 3339 string', '必填', '设备产生消息的 UTC 时间'],
   ['payload', 'object', '必填', '类型对应的数据；不得携带 vehicle_id 或 robot_id'],
+] as const;
+
+const deviceTaskErrors = [
+  ['400', 'invalid_id / invalid_json / unknown_field / invalid_status_state / invalid_progress / invalid_error_code / invalid_error_message / error_code_required'],
+  ['401', 'authentication_failed / invalid_lease'],
+  ['404', 'task_not_found / artifact_not_found'],
+  ['409', 'invalid_state / lease_expired / lease_conflict / attempts_exhausted / event_conflict / invalid_transition / file_id_required'],
+  ['416', 'range_not_supported'],
+  ['500', 'internal_error'],
 ] as const;
 
 const heartbeatExample = `{
@@ -126,9 +135,7 @@ const taskAvailableExample = `{
 const taskStatusExample = `{
   "event_id": "<NEW_UUID_FOR_EACH_STATE_REPORT>",
   "state": "downloading",
-  "progress": 25,
-  "error_code": "",
-  "error_message": ""
+  "progress": 25
 }`;
 
 const browserWebsocketFlow = `// 1. 服务端连接成功后发送
@@ -308,7 +315,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                 </section>
 
                 <section>
-                  <SectionTitle description="全局硬上限为 64 KiB；heartbeat 最大 4 KiB，telemetry 最大 16 KiB。sequence 使用十进制字符串避免跨语言 64 位整数精度问题。">统一消息外壳</SectionTitle>
+                  <SectionTitle description="全局硬上限为 64 KiB；heartbeat 最大 4 KiB，telemetry 最大 16 KiB。sequence 使用无前导零的十进制字符串表达正 INT64（最大 9223372036854775807），避免跨语言精度问题。">统一消息外壳</SectionTitle>
                   <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
                     <table className="w-full min-w-[44rem] text-left text-sm">
                       <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">字段</th><th className="px-4 py-3">类型</th><th className="px-4 py-3">要求</th><th className="px-4 py-3">说明</th></tr></thead>
@@ -333,6 +340,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                 <section>
                   <SectionTitle description="重复 sequence 返回 duplicate=true，不再次写入遥测；格式、版本和状态错误返回 type=error。">确认与幂等</SectionTitle>
                   <CodeBlock>{ackExample}</CodeBlock>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">服务端下行 <code>hello</code>、<code>ack</code>、<code>error</code> 的顶层 envelope 禁止未知字段；各消息的必填 payload 字段由 Schema 固定，同时允许新增可忽略的 payload 字段，旧客户端应忽略不认识的扩展字段。</p>
                 </section>
 
                 <aside className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
@@ -373,16 +381,31 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
                 </section>
 
                 <section>
-                  <SectionTitle description="允许的主路径为 accepted → downloading → delivering → delivered；失败可从活动状态进入 failed。progress 只能递增，delivered 必须为 100。">状态与幂等</SectionTitle>
+                  <SectionTitle description="允许的主路径为 accepted → downloading → delivering → delivered；失败可从活动状态进入 failed。progress 只能递增，delivered 必须为 100，failed 必须提供非空 error_code。">状态与幂等</SectionTitle>
                   <CodeBlock>{taskStatusExample}</CodeBlock>
                   <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
-                    <li><code>event_id</code> 全局唯一；同一事件重试返回当前任务，不重复写事件。</li>
-                    <li>租约为 30 分钟；接受/下载阶段超时且未超过三次可重新投递，交付中超时进入失败。</li>
+                    <li><code>event_id</code> 是持久幂等键；只有同一规范化正文并携带创建事件时的原租约才算精确重放。终态、租约过期或后端重启后仍可确认，但不会再次推进状态。</li>
+                    <li>同一 <code>event_id</code> 更改正文返回 <code>event_conflict</code>，改用其他租约返回 <code>invalid_lease</code>；可选空错误字段与省略字段按同一正文处理。</li>
+                    <li>status 请求只允许合同字段；<code>error_code</code> 最长 64 字符，<code>error_message</code> 最长 512 字符，未知字段和错误类型返回 400。</li>
+                    <li>租约为 30 分钟；接受/下载阶段超时且未超过三次可重新投递，交付中超时进入失败。重新接受后 <code>attempt</code> 增加，旧租约失效，<code>progress</code> 保留且只能继续递增。</li>
                     <li>路网 v2 JSON 同时包含语义拓扑、直线/三次贝塞尔曲线定义和服务器生成的确定性轨迹点；编辑 JSON、轨迹 CSV 与设备 artifact 均来自同一不可变 revision。</li>
+                    <li>路网 v1/v2 均要求节点/边 ID 唯一、端点存在并禁止自环；双向边占用两个方向，两条相反的单向边可共存。v2 输入轨迹会由平台重新生成。</li>
                     <li>地图包 v2 的 manifest 列出一到多个文件。PNG/JPEG 为单个原图；PGM+YAML 保持两个原始文件，并携带地图格式、坐标模式、resolution 和 origin。</li>
                     <li>制品只支持完整下载，携带 <code>Range</code> 会返回 416；车端须逐文件校验字节数、MIME 和 SHA-256，截断或哈希不匹配时回报 <code>failed</code>。</li>
                     <li>平台“已送达”只表示车端已校验并保存/交给本地适配器，不表示地图已被车辆加载或应用。</li>
                   </ul>
+                </section>
+
+                <section>
+                  <SectionTitle description="设备任务接口统一返回 { ok:false, code, message }。同一个 code 只对应一个 HTTP 状态；客户端按状态和 code 分类处理，不解析 message 文案。">固定错误合同</SectionTitle>
+                  <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full min-w-[44rem] text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">HTTP</th><th className="px-4 py-3">允许的 code</th></tr></thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {deviceTaskErrors.map(([status, codes]) => <tr key={status}><td className="px-4 py-3 font-mono text-xs text-slate-950">{status}</td><td className="px-4 py-3 font-mono text-xs leading-6 text-slate-600">{codes}</td></tr>)}
+                      </tbody>
+                    </table>
+                  </div>
                 </section>
               </div>
             )}
@@ -424,7 +447,7 @@ export function ProtocolsPage({ embedded = false }: { embedded?: boolean }) {
 
             <aside className="mt-8 flex gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
               <Braces className="mt-0.5 size-5 shrink-0 text-blue-700" aria-hidden="true" />
-              <p><strong className="text-slate-950">机器可读合同：</strong> REST API 见 <code>roc-backend/schemas/openapi-v1.json</code>；设备通信、路网 v1/v2 与下发任务分别见同目录 JSON Schema。路网 v2 的采样算法固定为 <code>uniform-parameter-v1</code>、精度固定为 6 位。</p>
+              <p><strong className="text-slate-950">机器可读合同：</strong> REST API 见 <code>roc-backend/schemas/openapi-v1.json</code>；设备通信、路网 v1/v2 与下发任务分别见同目录 JSON Schema。本轮固定使用 Device Protocol v1、map package v2 和 road-network v2（兼容旧路网 v1），不做动态能力协商或自动降级。采样算法固定为 <code>uniform-parameter-v1</code>、精度固定为 6 位；交付包包含合同快照及 SHA-256。</p>
             </aside>
 
             <aside className="mt-4 flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">

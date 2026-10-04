@@ -32,8 +32,9 @@ import aiohttp
 
 
 LOG = logging.getLogger("roc.virtual_vehicle")
-LIBRARY_VERSION = "python-simulator-0.1.0"
+LIBRARY_VERSION = "python-simulator-0.2.0"
 TERMINAL_TASK_STATES = {"delivered", "failed", "canceled", "expired"}
+MAX_SEQUENCE = 9223372036854775807
 
 
 class SimulatorError(RuntimeError):
@@ -45,6 +46,16 @@ class AuthenticationError(SimulatorError):
 
 
 class TaskStopped(SimulatorError):
+    def __init__(self, message: str, code: str = "request_failed"):
+        super().__init__(message)
+        self.code = code
+
+
+class TransportUncertain(SimulatorError):
+    """An HTTP operation may have committed; never invent a replacement event."""
+
+
+class ReconciliationRequired(SimulatorError):
     pass
 
 
@@ -230,6 +241,13 @@ class StateStore:
         self.data["position"].setdefault("theta", self.config.initial_theta)
         self.data.setdefault("battery", self.config.initial_battery)
         self.data.setdefault("sequence", 0)
+        try:
+            sequence = int(self.data["sequence"])
+        except (TypeError, ValueError) as error:
+            raise SimulatorError("stored device sequence is not an integer") from error
+        if sequence < 0 or sequence > MAX_SEQUENCE:
+            raise SimulatorError("stored device sequence is outside signed 64-bit range")
+        self.data["sequence"] = sequence
         os.chmod(self.path, 0o600)
 
     def save(self) -> None:
@@ -245,6 +263,11 @@ class StateStore:
                 os.fsync(handle.fileno())
             os.chmod(temporary_name, 0o600)
             os.replace(temporary_name, self.path)
+            directory_fd = os.open(self.config.state_dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             try:
                 os.unlink(temporary_name)
@@ -252,11 +275,18 @@ class StateStore:
                 pass
 
     def sync_sequence(self, server_sequence: int) -> None:
+        if server_sequence < 0 or server_sequence > MAX_SEQUENCE:
+            raise SimulatorError("server hello sequence is outside signed 64-bit range")
         self.data["sequence"] = max(int(self.data.get("sequence", 0)), server_sequence)
         self.save()
 
     def next_sequence(self) -> int:
-        self.data["sequence"] = int(self.data.get("sequence", 0)) + 1
+        current = int(self.data.get("sequence", 0))
+        if current < 0 or current >= MAX_SEQUENCE:
+            raise SimulatorError(
+                "device sequence is exhausted; rotate the Device token and reset local state"
+            )
+        self.data["sequence"] = current + 1
         self.save()
         return int(self.data["sequence"])
 
@@ -265,14 +295,6 @@ class StateStore:
         task = tasks.setdefault(task_id, {"state": "offered", "event_ids": {}})
         task.setdefault("event_ids", {})
         return task
-
-    def event_id(self, task_id: str, state: str) -> str:
-        task = self.task(task_id)
-        event_ids = task["event_ids"]
-        if state not in event_ids:
-            event_ids[state] = str(uuid.uuid4())
-            self.save()
-        return str(event_ids[state])
 
     def update_task(self, task_id: str, **values: Any) -> None:
         self.task(task_id).update(values)
@@ -351,7 +373,7 @@ class VirtualVehicle:
         await websocket.send_json(self.envelope("telemetry", payload))
 
     async def heartbeat_loop(self, websocket: aiohttp.ClientWebSocketResponse) -> None:
-        interval = max(5.0, self.server_heartbeat_seconds * 0.75)
+        interval = max(0.5, self.server_heartbeat_seconds * 0.75)
         while not self.stop_event.is_set() and not websocket.closed:
             await self.send_heartbeat(websocket)
             await asyncio.sleep(interval)
@@ -362,6 +384,8 @@ class VirtualVehicle:
             await asyncio.sleep(self.config.telemetry_interval)
 
     async def handle_server_message(self, message: dict[str, Any]) -> None:
+        if message.get("protocol_version") != 1:
+            raise SimulatorError("unsupported server protocol version")
         message_type = str(message.get("type", ""))
         payload = message.get("payload")
         if not isinstance(payload, dict):
@@ -375,7 +399,7 @@ class VirtualVehicle:
             except (TypeError, ValueError) as error:
                 raise SimulatorError("server hello contains invalid sequence/heartbeat") from error
             self.state.sync_sequence(last_sequence)
-            self.server_heartbeat_seconds = max(5, heartbeat)
+            self.server_heartbeat_seconds = max(1, heartbeat)
             LOG.info(
                 "device session established vehicle_id=%s next_sequence=%d",
                 self.vehicle_id,
@@ -390,11 +414,11 @@ class VirtualVehicle:
                 LOG.warning("ignored task.available with invalid task_id")
                 return
             task_state = str(self.state.task(task_id).get("state", ""))
-            if task_state in TERMINAL_TASK_STATES or task_id in self.queued_task_ids:
+            if (task_state in TERMINAL_TASK_STATES or task_state == "reconciliation_required"
+                    or task_id in self.queued_task_ids):
                 return
             self.state.update_task(
                 task_id,
-                state="offered",
                 resource_type=str(payload.get("resource_type", "")),
                 resource_revision_id=str(payload.get("resource_revision_id", "")),
             )
@@ -530,14 +554,17 @@ class VirtualVehicle:
                     try:
                         payload = await response.json(content_type=None)
                     except (json.JSONDecodeError, aiohttp.ContentTypeError) as error:
-                        raise SimulatorError(
+                        raise TransportUncertain(
                             f"{method} {path} returned non-JSON HTTP {response.status}"
                         ) from error
-                    if response.status in {401, 403}:
+                    if not isinstance(payload, dict):
+                        raise TransportUncertain(f"{method} {path} returned invalid JSON")
+                    code = str(payload.get("code", "request_failed"))
+                    if response.status in {401, 403} and code != "invalid_lease":
                         raise AuthenticationError(
                             str(payload.get("error", payload.get("message", "unauthorized")))
                         )
-                    if response.status >= 500 and attempt < attempts:
+                    if response.status >= 500:
                         raise aiohttp.ClientResponseError(
                             response.request_info,
                             response.history,
@@ -546,18 +573,40 @@ class VirtualVehicle:
                             headers=response.headers,
                         )
                     if response.status >= 400:
-                        code = str(payload.get("error", payload.get("code", "request_failed")))
                         detail = str(payload.get("message", ""))
-                        raise TaskStopped(f"HTTP {response.status} {code}: {detail}")
-                    if not isinstance(payload, dict):
-                        raise SimulatorError(f"{method} {path} returned invalid JSON")
+                        raise TaskStopped(f"HTTP {response.status} {code}: {detail}", code)
                     return payload
             except (aiohttp.ClientError, asyncio.TimeoutError) as error:
                 last_error = error
                 if attempt >= attempts:
                     break
                 await asyncio.sleep(2 ** (attempt - 1))
-        raise SimulatorError(f"{method} {path} failed after retries: {last_error}")
+        raise TransportUncertain(f"{method} {path} failed after retries: {type(last_error).__name__}")
+
+    async def replay_pending(self, task_id: str) -> bool:
+        task = self.state.task(task_id)
+        pending = task.get("outbox")
+        if not pending:
+            return False
+        body, lease = pending["body"], pending["lease"]
+        digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if digest != pending["digest"]:
+            self.state.update_task(task_id, state="reconciliation_required")
+            raise ReconciliationRequired("local status event digest mismatch")
+        try:
+            await self.request_json("POST", f"/api/device/tasks/{task_id}/status", lease=lease, body=body)
+        except TaskStopped as error:
+            # A committed event must replay. An uncommitted terminal event must
+            # never be replaced with accept/new attempt after an ambiguous crash.
+            if body["state"] in {"delivered", "failed"} or error.code == "event_conflict":
+                self.state.update_task(task_id, state="reconciliation_required", error_code=error.code)
+                raise ReconciliationRequired("pending event requires operator reconciliation") from error
+            self.state.update_task(task_id, outbox=None)
+            raise
+        terminal = body["state"] in {"delivered", "failed"}
+        self.state.update_task(task_id, state=body["state"], progress=body["progress"],
+                               outbox=None, lease=None if terminal else task.get("lease"))
+        return terminal
 
     async def report_status(
         self,
@@ -570,7 +619,7 @@ class VirtualVehicle:
         error_message: str = "",
     ) -> None:
         body: dict[str, Any] = {
-            "event_id": self.state.event_id(task_id, state),
+            "event_id": str(uuid.uuid4()),
             "state": state,
             "progress": progress,
         }
@@ -578,10 +627,11 @@ class VirtualVehicle:
             body["error_code"] = error_code[:64]
         if error_message:
             body["error_message"] = error_message[:512]
-        await self.request_json(
-            "POST", f"/api/device/tasks/{task_id}/status", lease=lease, body=body
-        )
-        self.state.update_task(task_id, state=state, progress=progress)
+        if self.state.task(task_id).get("outbox"):
+            raise ReconciliationRequired("replay the pending event before creating a new event")
+        digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self.state.update_task(task_id, outbox={"body": body, "lease": lease, "digest": digest})
+        await self.replay_pending(task_id)
 
     @staticmethod
     def normalized_content_type(value: str) -> str:
@@ -606,14 +656,14 @@ class VirtualVehicle:
             raise SimulatorError("manifest sha256 is invalid")
         artifact_url = str(manifest.get("artifact_url", ""))
         expected_path = f"/api/device/tasks/{task_id}/artifact"
+        if "id" in manifest:
+            file_id = str(uuid.UUID(str(manifest["id"])))
+            expected_path += "/" + file_id
         if artifact_url != expected_path:
             raise SimulatorError("manifest artifact_url is invalid")
 
         extension = self.artifact_extension(str(manifest["resource_type"]), expected_type)
-        final_name = (
-            f"{manifest['resource_type']}-v{int(manifest['version'])}-"
-            f"{expected_hash[:12]}{extension}"
-        )
+        final_name = f"{task_id}-{manifest.get('role', 'resource')}-{expected_hash}{extension}"
         final_path = self.config.artifact_dir / final_name
         part_path = self.config.artifact_dir / f".{final_name}.{uuid.uuid4().hex}.part"
         headers = self.device_headers | {"X-Task-Lease": lease}
@@ -626,10 +676,12 @@ class VirtualVehicle:
                 ssl=self.config.ssl_context(),
                 timeout=aiohttp.ClientTimeout(total=300),
             ) as response:
-                if response.status in {401, 403}:
-                    raise AuthenticationError("artifact authorization failed")
                 if response.status >= 400:
-                    raise TaskStopped(f"artifact download returned HTTP {response.status}")
+                    payload = await response.json(content_type=None)
+                    code = str(payload.get("code", "request_failed"))
+                    if response.status in {401, 403} and code != "invalid_lease":
+                        raise AuthenticationError("artifact authorization failed")
+                    raise TaskStopped(f"artifact download returned HTTP {response.status}", code)
                 actual_type = self.normalized_content_type(
                     response.headers.get("Content-Type", "")
                 )
@@ -640,7 +692,8 @@ class VirtualVehicle:
                     )
                 if header_hash != expected_hash:
                     raise SimulatorError("artifact SHA-256 response header mismatch")
-                with part_path.open("xb") as output:
+                fd = os.open(part_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                with os.fdopen(fd, "wb") as output:
                     async for chunk in response.content.iter_chunked(64 * 1024):
                         received += len(chunk)
                         if received > expected_size or received > self.config.max_artifact_bytes:
@@ -656,23 +709,109 @@ class VirtualVehicle:
             if digest.hexdigest() != expected_hash:
                 raise SimulatorError("artifact SHA-256 mismatch")
             return part_path, final_path
+        except (aiohttp.ClientError, asyncio.TimeoutError) as error:
+            part_path.unlink(missing_ok=True)
+            raise TransportUncertain("artifact transport interrupted") from error
         except Exception:
             part_path.unlink(missing_ok=True)
             raise
 
+    @staticmethod
+    def validate_road_network(network: dict[str, Any], manifest: dict[str, Any]) -> None:
+        version = network.get("schema_version")
+        if version not in {1, 2} or version != manifest.get("schema_version"):
+            raise SimulatorError("unsupported or mismatched road schema")
+        if network.get("coordinate_mode") not in {"metric", "legacy-normalized"}:
+            raise SimulatorError("invalid coordinate mode")
+        nodes = network.get("nodes", [])
+        edges = network.get("edges", [])
+        if not isinstance(nodes, list) or not isinstance(edges, list):
+            raise SimulatorError("invalid road topology")
+        node_by_id = {node["id"]: node for node in nodes}
+        if len(node_by_id) != len(nodes) or len({edge["id"] for edge in edges}) != len(edges):
+            raise SimulatorError("duplicate road ID")
+        def finite(value: Any) -> bool:
+            return isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
+        if any(not finite(node[axis]) for node in nodes for axis in ("x", "y")):
+            raise SimulatorError("non-finite road coordinates")
+        arcs: set[tuple[str, str]] = set()
+        expected: dict[str, tuple[dict[str, Any], dict[str, Any], str, str]] = {}
+        for edge in edges:
+            start, end = edge["from"], edge["to"]
+            direction = edge["direction"]
+            if start == end or start not in node_by_id or end not in node_by_id or direction not in {"both", "forward"}:
+                raise SimulatorError("invalid road edge")
+            directions = [(start, end, "forward")]
+            if direction == "both":
+                directions.append((end, start, "reverse"))
+            if version == 2:
+                geometry = edge["geometry"]
+                if geometry["type"] not in {"line", "cubic_bezier"}:
+                    raise SimulatorError("unsupported curve")
+                if geometry["type"] == "cubic_bezier" and any(
+                    not finite(geometry[control][axis]) for control in ("control1", "control2") for axis in ("x", "y")
+                ):
+                    raise SimulatorError("invalid curve control")
+            for a, b, name in directions:
+                if (a, b) in arcs:
+                    raise SimulatorError("duplicate directed connection")
+                arcs.add((a, b))
+                expected[edge["id"] + ":" + name] = (node_by_id[a], node_by_id[b], edge["id"], name)
+        if version == 1:
+            return
+        sampling = network["sampling"]
+        spacing = sampling["spacing"]
+        if (sampling["algorithm"] != "uniform-parameter-v1" or sampling["precision"] != 6
+                or not finite(spacing) or not 0.000001 <= spacing <= (100 if network["coordinate_mode"] == "metric" else 1)):
+            raise SimulatorError("unsupported sampling profile")
+        trajectories = network["trajectories"]
+        if len(trajectories) != len(expected) or len({item["id"] for item in trajectories}) != len(trajectories):
+            raise SimulatorError("invalid trajectory set")
+        total = 0
+        for item in trajectories:
+            start, end, edge_id, direction = expected[item["id"]]
+            if item["edge_id"] != edge_id or item["direction"] != direction:
+                raise SimulatorError("trajectory identity mismatch")
+            points = item["points"]
+            total += len(points)
+            if not 2 <= len(points) <= 10000 or total > 200000:
+                raise SimulatorError("trajectory point limit exceeded")
+            previous = 0.0
+            for index, point in enumerate(points):
+                if (point["index"] != index or any(not finite(point[key]) for key in ("x", "y", "s", "heading"))
+                        or point["s"] < previous or (index == 0 and point["s"] != 0)):
+                    raise SimulatorError("invalid ordered trajectory samples")
+                previous = point["s"]
+            if any(points[0][axis] != start[axis] or points[-1][axis] != end[axis] for axis in ("x", "y")):
+                raise SimulatorError("trajectory endpoints mismatch")
+            if not finite(item["length"]) or item["length"] != previous:
+                raise SimulatorError("trajectory length mismatch")
+
     async def deliver_task(self, offer: dict[str, Any]) -> None:
         task_id = str(offer["task_id"])
         lease = ""
-        part_path: Path | None = None
+        parts: list[Path] = []
         progress = 0
         try:
-            accepted = await self.request_json(
-                "POST", f"/api/device/tasks/{task_id}/accept"
-            )
-            lease = str(accepted.get("lease_token", ""))
-            if not lease:
-                raise SimulatorError("accept response did not contain a lease token")
-            self.state.update_task(task_id, state="accepted", progress=0)
+            task = self.state.task(task_id)
+            if task.get("state") == "reconciliation_required":
+                return
+            if await self.replay_pending(task_id):
+                return
+            if task.get("state") in TERMINAL_TASK_STATES:
+                return
+            if task.get("lease") and int(task.get("lease_expires_at", 0)) >= int(time.time()):
+                lease = task["lease"]
+            else:
+                accepted = await self.request_json("POST", f"/api/device/tasks/{task_id}/accept")
+                lease = str(accepted.get("lease_token", ""))
+                if not lease:
+                    raise SimulatorError("accept response did not contain a lease token")
+                snapshot = accepted["task"]
+                self.state.update_task(task_id, state=snapshot["state"], progress=snapshot["progress"],
+                                       attempt=snapshot["attempt"], lease=lease,
+                                       lease_expires_at=accepted["lease_expires_at"], event_ids={})
+            progress = int(task.get("progress", 0))
             manifest_response = await self.request_json(
                 "GET", f"/api/device/tasks/{task_id}/manifest", lease=lease
             )
@@ -686,18 +825,34 @@ class VirtualVehicle:
                 "byte_size",
                 "sha256",
                 "version",
-                "artifact_url",
             }:
                 if field not in manifest:
                     raise SimulatorError(f"task manifest is missing {field}")
-
-            await self.report_status(task_id, lease, "downloading", 1)
-            progress = 1
-            part_path, final_path = await self.download_artifact(task_id, lease, manifest)
-            await self.report_status(task_id, lease, "delivering", 90)
-            progress = 90
-            os.replace(part_path, final_path)
-            part_path = None
+            if (manifest["resource_type"] != offer.get("resource_type")
+                    or manifest["resource_revision_id"] != offer.get("resource_revision_id")):
+                raise SimulatorError("manifest resource differs from task offer")
+            files = self.manifest_files(task_id, manifest)
+            if task.get("state") != "delivering":
+                progress = max(progress, 1)
+                await self.report_status(task_id, lease, "downloading", progress)
+            final_files = []
+            for metadata in files:
+                part_path, final_path = await self.download_artifact(task_id, lease, metadata)
+                parts.append(part_path)
+                if manifest["resource_type"] == "road_network":
+                    self.validate_road_network(json.loads(part_path.read_text()), manifest)
+                final_files.append((part_path, final_path))
+            progress = max(progress, 90)
+            await self.report_status(task_id, lease, "delivering", progress)
+            for part_path, final_path in final_files:
+                os.replace(part_path, final_path)
+                parts.remove(part_path)
+            metadata_path = self.config.artifact_dir / f"{task_id}-manifest.json"
+            fd = os.open(metadata_path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "w") as output:
+                json.dump(manifest, output, sort_keys=True)
+                output.flush()
+                os.fsync(output.fileno())
             directory_fd = os.open(self.config.artifact_dir, os.O_RDONLY | os.O_DIRECTORY)
             try:
                 os.fsync(directory_fd)
@@ -706,22 +861,27 @@ class VirtualVehicle:
             self.state.update_task(
                 task_id,
                 state="delivering",
-                progress=95,
-                artifact_path=str(final_path),
+                progress=progress,
+                artifact_paths=[str(path) for _, path in final_files],
+                manifest_path=str(metadata_path),
                 sha256=str(manifest["sha256"]),
             )
             await self.report_status(task_id, lease, "delivered", 100)
-            LOG.info("deployment delivered task_id=%s file=%s", task_id, final_path)
+            LOG.info("deployment delivered task_id=%s files=%d", task_id, len(final_files))
+        except (TransportUncertain, ReconciliationRequired):
+            # Preserve the original outbox and lease; the worker retries it.
+            # In particular, a lost delivered response must NOT emit failed.
+            raise
         except TaskStopped as error:
             LOG.warning("deployment stopped task_id=%s reason=%s", task_id, error)
-            self.state.update_task(task_id, state="stopped", error=str(error))
+            self.state.update_task(task_id, state="stopped", error_code=error.code, lease=None)
         except AuthenticationError as error:
             LOG.error("deployment authorization failed task_id=%s reason=%s", task_id, error)
             self.state.update_task(task_id, state="authentication_failed", error=str(error))
         except Exception as error:
             LOG.error("deployment failed task_id=%s reason=%s", task_id, error)
             self.state.update_task(task_id, state="failed_local", error=str(error))
-            if lease:
+            if lease and not self.state.task(task_id).get("outbox"):
                 try:
                     await self.report_status(
                         task_id,
@@ -737,10 +897,44 @@ class VirtualVehicle:
                         task_id,
                         report_error,
                     )
+                    if self.state.task(task_id).get("outbox"):
+                        raise TransportUncertain("failure status awaiting confirmation") from report_error
         finally:
-            if part_path is not None:
+            for part_path in parts:
                 part_path.unlink(missing_ok=True)
             self.queued_task_ids.discard(task_id)
+
+    @staticmethod
+    def manifest_files(task_id: str, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+        resource = manifest["resource_type"]
+        if resource == "road_network":
+            if manifest.get("schema_version") not in {1, 2}:
+                raise SimulatorError("unsupported road schema version")
+            return [manifest]
+        if resource != "map":
+            raise SimulatorError("unsupported resource type")
+        if manifest.get("package_version", 1) == 1:
+            return [manifest]  # Historical single-file artifact only.
+        if manifest.get("package_version") != 2 or manifest.get("package_digest_algorithm") != "roc-file-set-v1":
+            raise SimulatorError("unsupported map package version/digest")
+        files = manifest.get("files")
+        expected_roles = {"pgm", "yaml"} if manifest.get("map_format") == "pgm-yaml" else {"image"}
+        if (manifest.get("map_format") not in {"png", "jpeg", "pgm-yaml"}
+                or not isinstance(files, list) or len(files) != len(expected_roles)
+                or {item["role"] for item in files} != expected_roles
+                or len({item["id"] for item in files}) != len(files)):
+            raise SimulatorError("invalid map package file set")
+        digest_body = "\n".join(item["role"] + ":" + item["sha256"] for item in sorted(files, key=lambda item: item["role"]))
+        if (hashlib.sha256(digest_body.encode()).hexdigest() != manifest["sha256"]
+                or sum(item["byte_size"] for item in files) != manifest["byte_size"]):
+            raise SimulatorError("map package aggregate mismatch")
+        if manifest.get("coordinate_mode") not in {"metric", "legacy-normalized"}:
+            raise SimulatorError("invalid map coordinate mode")
+        if manifest["coordinate_mode"] == "metric":
+            values = [manifest["resolution"], *[manifest["origin"][key] for key in ("x", "y", "theta")]]
+            if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in values) or values[0] <= 0:
+                raise SimulatorError("invalid metric map metadata")
+        return [dict(item, resource_type=resource, version=manifest["version"]) for item in files]
 
     async def task_worker(self) -> None:
         while True:
@@ -748,7 +942,15 @@ class VirtualVehicle:
             try:
                 if offer is None:
                     return
-                await self.deliver_task(offer)
+                try:
+                    await self.deliver_task(offer)
+                except TransportUncertain:
+                    if not self.stop_event.is_set():
+                        await asyncio.sleep(1)
+                        self.queued_task_ids.add(str(offer["task_id"]))
+                        await self.task_queue.put(offer)
+                except ReconciliationRequired:
+                    LOG.error("deployment requires reconciliation task_id=%s", offer["task_id"])
             finally:
                 self.task_queue.task_done()
 
@@ -757,6 +959,10 @@ class VirtualVehicle:
         connector = aiohttp.TCPConnector(ssl=self.config.ssl_context())
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             self.session = session
+            for task_id, task in self.state.data["tasks"].items():
+                if task.get("state") != "reconciliation_required" and (task.get("outbox") or task.get("lease")):
+                    self.queued_task_ids.add(task_id)
+                    await self.task_queue.put(dict(task, task_id=task_id))
             worker = asyncio.create_task(self.task_worker())
             manager = asyncio.create_task(self.connection_manager())
             await self.stop_event.wait()

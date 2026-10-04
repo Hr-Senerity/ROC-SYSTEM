@@ -2,6 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://roc.example/schemas/road-network-v2.schema.json",
   "title": "ROC semantic road network and deterministic trajectories v2",
+  "description": "Canonical persisted and downlinked v2 topology plus SYSTEM-generated deterministic trajectories. Empty networks are valid drafts.",
+  "x-roc-semantic-rules": {
+    "inherits": "road-network-v1",
+    "node_ids": "unique",
+    "edge_ids": "unique",
+    "edge_endpoints": "must reference existing nodes",
+    "self_loops": "forbidden",
+    "connections": "directed arcs must be unique; both reserves both directed arcs; opposite forward-only edges are allowed",
+    "coordinates": "finite and not clipped by coordinate mode; coordinate_mode must equal the owning map",
+    "empty_network": "allowed",
+    "trajectories": "SYSTEM regenerates authoritative trajectories from sorted nodes and edges; one forward trajectory per edge and one reverse trajectory for each both edge",
+    "samples": "indices are contiguous from zero; first and last points equal the directed edge endpoints; s is monotonic from zero; length equals final s",
+    "input_trajectories": "not authoritative and replaced during normalization"
+  },
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "coordinate_mode", "sampling", "nodes", "edges", "trajectories"],
@@ -14,7 +28,7 @@
       "required": ["algorithm", "spacing", "precision"],
       "properties": {
         "algorithm": { "const": "uniform-parameter-v1" },
-        "spacing": { "type": "number", "exclusiveMinimum": 0 },
+        "spacing": { "type": "number", "minimum": 0.000001, "maximum": 100 },
         "precision": { "const": 6 }
       }
     },
@@ -22,6 +36,12 @@
     "edges": { "type": "array", "maxItems": 50000, "items": { "$ref": "#/$defs/edge" } },
     "trajectories": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/trajectory" } }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "coordinate_mode": { "const": "legacy-normalized" } }, "required": ["coordinate_mode"] },
+      "then": { "properties": { "sampling": { "properties": { "spacing": { "maximum": 1 } } } } }
+    }
+  ],
   "$defs": {
     "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$" },
     "trajectoryId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$" },

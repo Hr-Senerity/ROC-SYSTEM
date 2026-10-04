@@ -190,7 +190,11 @@ export function parseRoadNetwork(value: unknown): RoadNetwork {
 export function validateRoadNetwork(network: RoadNetwork, expectedMode: CoordinateMode): string[] {
   const errors: string[] = [];
   if (network.coordinate_mode !== expectedMode) errors.push('路网坐标模式与地图不一致');
-  if (!Number.isFinite(network.sampling.spacing) || network.sampling.spacing <= 0) errors.push('采样间距必须大于 0');
+  const maxSpacing = expectedMode === 'metric' ? 100 : 1;
+  if (!Number.isFinite(network.sampling.spacing) || network.sampling.spacing < 0.000001
+      || network.sampling.spacing > maxSpacing) {
+    errors.push(`采样间距应在 0.000001 至 ${maxSpacing} 之间`);
+  }
   if (network.nodes.length > 10_000) errors.push('节点数量不能超过 10,000');
   if (network.edges.length > 50_000) errors.push('边数量不能超过 50,000');
   const nodeIds = new Set<string>();
@@ -202,17 +206,21 @@ export function validateRoadNetwork(network: RoadNetwork, expectedMode: Coordina
     if (new TextEncoder().encode(node.label).length > 128) errors.push(`节点 ${node.id} 的标签超过 128 字节`);
   });
   const edgeIds = new Set<string>();
-  const edgeKeys = new Set<string>();
+  const directedConnections = new Set<string>();
   network.edges.forEach((edge, index) => {
     if (!identifierPattern.test(edge.id)) errors.push(`边 ${index + 1} 的 ID 不符合规范`);
     if (edgeIds.has(edge.id)) errors.push(`边 ID 重复：${edge.id}`);
     edgeIds.add(edge.id);
     if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) errors.push(`边 ${edge.id} 引用了不存在的节点`);
     if (edge.from === edge.to) errors.push(`边 ${edge.id} 不能形成自环`);
-    const endpoints = edge.direction === 'both' ? [edge.from, edge.to].sort() : [edge.from, edge.to];
-    const key = `${edge.direction}:${endpoints[0]}:${endpoints[1]}`;
-    if (edgeKeys.has(key)) errors.push(`边 ${edge.id} 与已有连接重复`);
-    edgeKeys.add(key);
+    const forwardConnection = `${edge.from}\n${edge.to}`;
+    const reverseConnection = `${edge.to}\n${edge.from}`;
+    if (directedConnections.has(forwardConnection)
+        || (edge.direction === 'both' && directedConnections.has(reverseConnection))) {
+      errors.push(`边 ${edge.id} 与已有有向连接重叠`);
+    }
+    directedConnections.add(forwardConnection);
+    if (edge.direction === 'both') directedConnections.add(reverseConnection);
     if (edge.max_speed_mps !== null && (!Number.isFinite(edge.max_speed_mps) || edge.max_speed_mps <= 0 || edge.max_speed_mps > 100)) {
       errors.push(`边 ${edge.id} 的限速应大于 0 且不超过 100 m/s`);
     }

@@ -2,6 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:roc:road-network:v1",
   "title": "ROC road network v1",
+  "description": "Canonical persisted and downlinked v1 semantic topology. Empty networks are valid drafts.",
+  "x-roc-semantic-rules": {
+    "node_ids": "unique",
+    "edge_ids": "unique",
+    "edge_endpoints": "must reference existing nodes",
+    "self_loops": "forbidden",
+    "connections": "directed arcs must be unique; both reserves both directed arcs; opposite forward-only edges are allowed",
+    "coordinates": "finite and not clipped by coordinate mode; coordinate_mode must equal the owning map",
+    "empty_network": "allowed"
+  },
   "type": "object",
   "required": ["schema_version", "coordinate_mode", "nodes", "edges"],
   "properties": {
@@ -9,10 +19,12 @@
     "coordinate_mode": { "enum": ["metric", "legacy-normalized"] },
     "nodes": {
       "type": "array",
+      "maxItems": 10000,
       "items": { "$ref": "#/$defs/node" }
     },
     "edges": {
       "type": "array",
+      "maxItems": 50000,
       "items": { "$ref": "#/$defs/edge" }
     }
   },
@@ -46,7 +58,8 @@
         "direction": { "enum": ["both", "forward"] },
         "max_speed_mps": {
           "type": ["number", "null"],
-          "exclusiveMinimum": 0
+          "exclusiveMinimum": 0,
+          "maximum": 100
         }
       },
       "additionalProperties": false

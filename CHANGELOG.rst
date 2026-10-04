@@ -21,13 +21,30 @@
 - 后端在保存 revision 时按 ``uniform-parameter-v1`` 生成并持久化每个通行方向的确定性轨迹点，固定 6 位精度，并对单轨迹、全路网及正文大小设置上限。
 - 增加路网编辑 JSON 与轨迹 CSV 双导出；CSV 直接序列化持久化样本，和设备下载的路网 artifact 逐点一致。
 - 路网下发界面展示 schema、轨迹数、采样点数、采样间距与哈希；地图下发界面展示 package 版本、格式、文件数、坐标和原点。
+- 为设备任务 accept/status 成功响应和 400/401/404/409/416/500 错误响应增加专用 JSON Schema，并由 OpenAPI 固定每个端点允许的 HTTP 状态集合。
+- 为服务端下行 ``hello``、``ack``、``error`` 和 ``task.available`` 增加机器可读 Schema，冻结必填字段和扩展策略。
+- 增加迁移 ``012_deployment_event_replay.sql``，为设备状态事件保存规范化正文、SHA-256、原 attempt、原 lease 摘要与到期时间，支持后端重启及终态后的精确确认重放。
+- road-network v1/v2 Schema 增加 ``x-roc-semantic-rules``，机器化声明 ID 唯一、端点引用、自环、方向占用、空草稿及 v2 权威轨迹生成规则。
+- SYSTEM 模拟器支持 map package v2 多文件、road-network v1/v2 结构/语义校验及受权限保护的持久 Outbox，终态回应丢失/进程崩溃后使用原正文和 lease 重放。
+- release bundle 增加 OpenAPI/Schema 快照、SHA256SUMS、README 与 CHANGELOG，并记录升级/回滚及固定版本 Vehicle 交接要求；本轮不引入动态设备能力协商。
 
 变更
 ----
+- 设备与服务端消息的 ``sequence`` 合同收紧为无前导零的十进制字符串 ``1..9223372036854775807``，与 PostgreSQL ``BIGINT`` 持久化范围一致；超上限值在进入数据库前即被拒绝。
+- 任务 status Schema 增加条件约束：``delivered`` 必须 ``progress=100``，``failed`` 必须携带非空 ``error_code``；控制器使用同源解析器拒绝未知字段、错误类型和超长错误文本。
 - OpenAPI 将车端鉴权从易误导的 HTTP Bearer 定义改为显式 ``Authorization`` apiKey，并固定请求头值为 ``Device <DEVICE_TOKEN>``。
 - 车辆接入凭据弹窗明确 Device Token 已唯一映射车辆；车辆 ID 由 ``hello.payload.vehicle_id`` 返回，上行 heartbeat/telemetry 正文不得重复声明车辆身份。
 - 地图上传不再把 PGM+YAML 的派生 PNG 当作车端制品；派生 PNG 仅用于浏览器预览，设备按 package manifest 下载原始文件。
 - 新建/编辑路网统一保存 schema v2；schema v1 revision 保持读取兼容，并在编辑器中升级为直线几何草稿。
+- 设备任务错误统一为 ``{ok:false, code, message}``，每个错误码唯一映射一个 HTTP 状态；任务缺失使用 ``task_not_found``，非法上报状态使用 ``invalid_status_state``，避免与任务状态冲突混淆。
+- 下行 WebSocket envelope 保持封闭，已知消息 payload 允许客户端忽略的新增字段，以兼顾严格校验和前向兼容。
+- 任务 attempt 只在重新接受已投递任务时递增，progress 在同一 task 的全部 attempt 间保持单调；重新投递后的旧 lease 不再具有下载或状态推进权限。
+- 状态事件重放由仅比较 ``event_id`` 收紧为同时比较规范化正文与原 lease；精确重放可在终态、租约过期或后端重启后返回成功，但不同正文返回 ``event_conflict``、不同 lease 返回 ``invalid_lease``。
+- 路网连接去重改为有向占用规则：双向边占用两个方向，与任何重叠单向边冲突；两条相反方向的单向边仍可共存，前后端校验保持一致。
+- 状态事件 UUID 统一小写后进行全局幂等串行化，跨任务并发碰撞返回 ``event_conflict`` 而非数据库约束导致的 500；签发租约使用数据库规范化 task UUID，避免 URL 大小写影响重复 accept。
+- v2 sampling.spacing 在采样前规范化为 6 位，固定最小值 0.000001，并同步前后端与 Schema 的坐标模式上限；修复规范化路网再次保存时的采样漂移、极大有限坐标估长溢出和非法字段类型异常。
+- 后端 Release 测试目标显式保留 assert 断言，避免测试在生产构建模式下跳过合同校验。
+- 模拟器恢复时保留原 lease/attempt/progress，新 attempt 不复用旧状态事件 ID；未知终态进入 reconciliation，网络不确定结果不再被替换为新的 failed 事件。
 
 ==========
 [0.2.1] - 2026-09-24

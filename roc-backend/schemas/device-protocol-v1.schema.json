@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:roc:device-protocol:upstream:v1",
-  "title": "ROC JSON Device Protocol v1 upstream message",
+  "title": "ROC JSON Device Protocol v1",
+  "description": "The root schema validates device-to-server heartbeat and telemetry. $defs also freeze server-to-device hello, ack and error messages.",
   "type": "object",
   "required": [
     "protocol_version",
@@ -15,7 +16,7 @@
     "protocol_version": { "const": 1 },
     "message_id": { "type": "string", "format": "uuid" },
     "type": { "enum": ["heartbeat", "telemetry"] },
-    "sequence": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "sequence": { "$ref": "#/$defs/positiveInt64String" },
     "timestamp": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$"
@@ -38,6 +39,126 @@
   ],
   "additionalProperties": false,
   "$defs": {
+    "positiveInt64String": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 19,
+      "pattern": "^(?:[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])$",
+      "description": "Canonical decimal string in 1..9223372036854775807; leading zeroes are forbidden."
+    },
+    "nonNegativeInt64String": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 19,
+      "pattern": "^(?:0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])$",
+      "description": "Canonical decimal string in 0..9223372036854775807; leading zeroes are forbidden."
+    },
+    "serverMessageEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocol_version", "message_id", "type", "sequence",
+        "timestamp", "payload"
+      ],
+      "properties": {
+        "protocol_version": { "const": 1 },
+        "message_id": { "type": "string", "format": "uuid" },
+        "type": { "type": "string" },
+        "sequence": { "$ref": "#/$defs/positiveInt64String" },
+        "timestamp": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?(Z|[+-][0-9]{2}:[0-9]{2})$"
+        },
+        "payload": { "type": "object" }
+      },
+      "description": "Server-to-device envelope is closed. Message payloads permit additive extension fields for forward compatibility."
+    },
+    "hello": {
+      "allOf": [
+        { "$ref": "#/$defs/serverMessageEnvelope" },
+        {
+          "properties": {
+            "type": { "const": "hello" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": [
+                "vehicle_id", "heartbeat_interval_seconds",
+                "idle_timeout_seconds", "max_message_bytes",
+                "max_heartbeat_bytes", "max_telemetry_bytes",
+                "last_client_sequence"
+              ],
+              "properties": {
+                "vehicle_id": { "type": "string", "format": "uuid" },
+                "heartbeat_interval_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+                "idle_timeout_seconds": { "type": "integer", "minimum": 2, "maximum": 7200 },
+                "max_message_bytes": { "const": 65536 },
+                "max_heartbeat_bytes": { "const": 4096 },
+                "max_telemetry_bytes": { "const": 16384 },
+                "last_client_sequence": { "$ref": "#/$defs/nonNegativeInt64String" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ack": {
+      "allOf": [
+        { "$ref": "#/$defs/serverMessageEnvelope" },
+        {
+          "properties": {
+            "type": { "const": "ack" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": [
+                "ack_message_id", "ack_sequence", "accepted_type", "duplicate"
+              ],
+              "properties": {
+                "ack_message_id": { "type": "string", "format": "uuid" },
+                "ack_sequence": { "$ref": "#/$defs/positiveInt64String" },
+                "accepted_type": { "enum": ["heartbeat", "telemetry"] },
+                "duplicate": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "error": {
+      "allOf": [
+        { "$ref": "#/$defs/serverMessageEnvelope" },
+        {
+          "properties": {
+            "type": { "const": "error" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["code", "message"],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "authentication_failed", "authentication_required",
+                    "capacity_reached", "connection_replaced",
+                    "credential_revoked", "credential_rotated",
+                    "heartbeat_timeout", "identity_not_allowed",
+                    "invalid_json", "invalid_library_version",
+                    "invalid_message_id", "invalid_message_type",
+                    "invalid_payload", "invalid_sequence",
+                    "invalid_telemetry", "invalid_timestamp", "invalid_type",
+                    "message_rejected", "message_too_large",
+                    "service_unavailable", "text_required", "unknown_field",
+                    "unsupported_message", "unsupported_protocol_version"
+                  ]
+                },
+                "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+                "request_message_id": { "type": "string", "format": "uuid" }
+              }
+            }
+          }
+        }
+      ]
+    },
     "libraryVersion": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"

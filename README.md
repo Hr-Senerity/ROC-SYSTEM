@@ -84,7 +84,7 @@ ROC-SYSTEM/
 │       └── release.env.example      # release 运行配置模板
 ├── postgres/
 │   ├── init/init.sql                # 全新数据库完整 Schema
-│   └── migrations/                  # 001–011 增量迁移
+│   └── migrations/                  # 001–012 增量迁移
 ├── roc-backend/
 │   ├── CMakeLists.txt               # C++17 · Drogon · libpqxx · OpenSSL · jsoncpp · yaml-cpp · zlib
 │   ├── schemas/                     # OpenAPI 3.1 与三个 JSON Schema
@@ -217,12 +217,13 @@ Vehicle C++17 client
 ### JSON Device Protocol v1
 
 - 车辆只通过 `/ws/device` 上报，不再轮询任务或调用旧协议 HTTP 入口。
-- 每条消息包含 `protocol_version`、UUID `message_id`、`type`、十进制字符串 `sequence`、RFC 3339 `timestamp` 和对象 `payload`。
+- 每条消息包含 `protocol_version`、UUID `message_id`、`type`、十进制字符串 `sequence`、RFC 3339 `timestamp` 和对象 `payload`。`sequence` 的机器合同为无前导零的正 INT64，即 `1..9223372036854775807`；使用字符串是为了避免 JavaScript 等环境丢失 64 位整数精度。
 - 车辆身份只从 WebSocket 握手头 `Authorization: Device <token>` 映射；正文中的 `vehicle_id`/`robot_id` 会被拒绝。
 - 当前上行类型为 `heartbeat` 和 `telemetry`。建议 30 秒心跳，45 秒无有效消息关闭连接；全局硬上限 64 KiB，heartbeat 最大 4 KiB，telemetry 最大 16 KiB。
 - 最后设备 sequence 与遥测在同一数据库更新中提交；重复 sequence 返回幂等确认，不重复写入或广播。
 - ROC 二进制、`/api/protocol/status`、`/api/protocol/command`、`/api/protocol/roc` 和 `/api/protocol/pending/{robot_id}` 已删除。
 - 服务端通过此常连接发送 `task.available` 通知；耐久任务和大文件仍通过 HTTP(S) 接受和下载，不在 WebSocket 传输大文件。
+- 下行 `hello`、`ack`、`error` 与 `task.available` 已有机器可读 Schema。服务端 envelope 为封闭结构，不允许新增顶层字段；各消息 payload 固定必填字段但允许向后兼容的可选扩展，客户端必须忽略不认识的 payload 字段。
 - REST API 的 OpenAPI 3.1 合同位于 `roc-backend/schemas/openapi-v1.json`；设备通信、路网和下发任务的 JSON Schema 位于同目录的 `device-protocol-v1.schema.json`、`road-network-v1.schema.json`、`road-network-v2.schema.json` 与 `deployment-task-v1.schema.json`。路网 v1 保持只读兼容，新编辑和保存统一生成 v2。
 ### 前端路由守卫
 
@@ -278,6 +279,8 @@ Vehicle opens /ws/device with a per-vehicle Device token
 ```
 
 监控页保持只读并读取地图的最新兼容快照；编辑器不会后台自动保存。只有已持久化版本才能在后续路网下发流程中作为资源引用。
+
+v2 采样间距在采样前统一到 6 位小数：米制范围为 `0.000001..100`，旧归一化模式为 `0.000001..1`，规范化结果再次保存保持相同轨迹与 SHA-256。节点/边 ID 必须唯一，边端点必须存在且不得自环；双向边占用两个有向连接，不允许叠加同方向边，但两条相反的单向边可以共存。空路网可保存为草稿，坐标必须有限且与所属地图模式一致，不强制裁剪至图片范围。
 
 ### 路网版本下发流
 
@@ -486,7 +489,46 @@ journalctl -u roc-virtual-vehicle@vehicle-01 -f
 | `/api/device/tasks/{task_id}/artifact/{file_id}` | GET | Device + `X-Task-Lease` | 下载 map package v2 中 manifest 指定的单个原始文件；逐文件返回 MIME、大小和 SHA-256 |
 | `/api/device/tasks/{task_id}/status` | POST | Device + `X-Task-Lease` | 以唯一 `event_id` 幂等回报下载、交付、完成或失败状态 |
 
-任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。车端必须在完整下载后核对字节数、MIME 和 SHA-256；地图包须逐文件校验，路网 v2 须保留平台点序且不得自行重采样替换。截断、类型、哈希或样本不匹配时必须回报 `failed`，不得回报 `delivered`。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
+任务主状态流为 `queued → offered → accepted → downloading → delivering → delivered`，活动状态也可进入 `failed`。新租约只能从 `offered` 接受；首次成功接受后 `attempt=1`，每次租约超时重新投递并再次接受时加一，有效租约的重复 accept 只返回同一租约且不增加 attempt。`progress` 属于整个 task，不因重试清零，后续 attempt 只能从已持久化进度继续单调上报；旧租约在重新投递或签发新租约后不能读取制品或推进状态。
+
+状态请求受条件 Schema 和同源后端校验约束：`delivered` 的 `progress` 必须为 100，`failed` 必须提供非空且不超过 64 字符的 `error_code`，未知字段会被拒绝。`event_id` 是持久幂等键：服务端通过迁移 `012_deployment_event_replay.sql` 保存规范化正文、SHA-256、原 attempt、原租约摘要和到期时间；只有“相同 event_id + 相同规范化正文 + 原租约”才返回 `replayed=true`。该精确重放可在任务已终态、租约已过期或后端重启后确认成功，但不会再次写事件、更新车辆交付指针或推进状态；相同 ID 改正文返回 `event_conflict`，改用其他租约返回 `invalid_lease`。UUID 大小写统一为小写，可选的空错误字段与省略字段视为同一规范化正文；迁移前缺少重放证据的历史事件返回 `event_conflict`，不会被猜测为成功。重放响应中的 `task` 是当前任务快照，不一定仍处于被重放事件的原状态或 attempt。
+
+车辆重连时服务端补发 `offered` 任务；租约超时会按阶段与尝试次数重新投递或失败。车端必须在完整下载后核对字节数、MIME 和 SHA-256；地图包须逐文件校验，路网 v2 须保留平台点序且不得自行重采样替换。截断、类型、哈希或样本不匹配时必须回报 `failed`，不得回报 `delivered`。`delivered` 仅表示车端已校验并保存/交给本地适配器，不表示车辆已加载或应用地图。机器可读状态机契约位于 `roc-backend/schemas/deployment-task-v1.schema.json`。
+
+### Vehicle 合同交接：固定版本
+
+本轮不引入设备能力清单、动态协商、任务版本筛选或自动降级。独立 Vehicle 库严格实现本次 SYSTEM 合同：Device Protocol **v1**、map package **v2**、road-network **v2**，保留历史 road-network v1 的读取兼容。
+
+| 范围 | Vehicle 必须遵循 |
+| --- | --- |
+| 身份 | HTTP/WS 使用 `Authorization: Device <token>`；Token 唯一映射车辆。车辆 ID 从 hello 获取，上行不重复声明身份。 |
+| 消息 | sequence 为 `1..9223372036854775807` 的无前导零字符串，持久化递增；服务端 sequence 不是跨重启去重键。上行只发 heartbeat/telemetry，下行 envelope 封闭、payload 允许忽略新增字段。 |
+| 地图 | 按 `files[]` 的 file ID URL 获取全部原始文件，逐文件核对 MIME/字节数/SHA-256；PGM+YAML 不以预览 PNG 替代。保存坐标模式、resolution 和 origin。 |
+| 包摘要 | `roc-file-set-v1`：按 role 字典序排列 `role:文件sha256`，以 LF 连接且无末尾 LF，再计算 UTF-8 SHA-256；包大小为各文件字节数之和。 |
+| 路网 | 校验 schema、ID 唯一、端点、自环和有向连接；v2 保留曲线和有序 samples，不自行重采样替换。坐标模式与单位必须保留。 |
+| 点列 | 单轨迹最多 10,000 点、总计最多 200,000 点；index 从 0 连续，首尾对应方向端点，s 从 0 单调且最后 s 等于 length；全部数值有限。CSV 不要求车端解析。 |
+| 任务 | 新 offered 接单才增加 attempt；同 task 重排，progress 跨 attempt 单调。delivered=100；failed 有非空 error_code；下载和新状态请求必须使用活动 lease。 |
+| 恢复 | 发送前持久化 event_id、完整正文和原 lease；响应丢失或进程重启后先精确重放，不先 accept。已提交事件即使原 lease 过期仍可确认；未知终态遇到拒绝时进入 reconciliation，不创建替代事件或擅自重新交付。 |
+| 错误 | 控制流只读 HTTP 状态和 `code`，不匹配 message 文案。未知协议/资源版本必须拒绝，不假装兼容或报 delivered。 |
+
+SYSTEM Python 模拟器仅用于合同与故障验收，不替代 C++17 Vehicle 库。模拟器支持地图多文件、路网 v1/v2、原子状态文件及持久 outbox；状态目录 0700、状态/文件 0600。其 Outbox 含临时 lease，必须按凭据保护；终态确认后移除 lease。旧模拟器遗留的未确认交付不能凭状态名推定成功，需核对平台事实或使用新的测试任务。
+
+交接以固定 Git commit、`contracts/` 中的 OpenAPI/Schema 和 `SHA256SUMS` 为准；运行实例先完成下述迁移与升级后，Vehicle 才使用这份新合同。Vehicle 适配不阻塞 SYSTEM 自身验收，双方真实 C++ 客户端联调另记结果。
+
+设备任务成功响应不再引用通用 `JsonSuccess`：accept 固定返回 `ok`、`replayed`、`lease_token`、`lease_expires_at` 和 `task`，status 固定返回 `ok`、`replayed`、`project_id` 和 `task`。失败响应统一为 `{ "ok": false, "code": "...", "message": "..." }`，且一个错误码只属于一个 HTTP 状态：
+
+| HTTP | 固定错误码 |
+| --- | --- |
+| 400 | `invalid_id`、`invalid_json`、`unknown_field`、`invalid_status_state`、`invalid_progress`、`invalid_error_code`、`invalid_error_message`、`error_code_required` |
+| 401 | `authentication_failed`、`invalid_lease` |
+| 404 | `task_not_found`、`artifact_not_found` |
+| 409 | `invalid_state`、`lease_expired`、`lease_conflict`、`attempts_exhausted`、`event_conflict`、`invalid_transition`、`file_id_required` |
+| 416 | `range_not_supported` |
+| 500 | `internal_error` |
+
+车端应根据 HTTP 状态和 `code` 决策，不应解析可能调整措辞的 `message`。accept、manifest、artifact、artifact file 与 status 的允许状态集合及专用响应 Schema 均由 `openapi-v1.json` 固定。
+
+路网 v1/v2 Schema 的 `x-roc-semantic-rules` 同步冻结 JSON Schema 无法单独表达的跨字段规则：节点与边 ID 唯一、端点必须存在、禁止自环、每个有向连接只能由一条边占用；双向边同时占用两个方向，而两条方向相反的单向边允许共存。空路网可作为草稿保存，坐标要求为有限数且模式与地图一致，但平台不额外把坐标裁剪到画布范围。v2 的输入轨迹不具权威性，保存时由 SYSTEM 按排序后的拓扑和曲线重新生成；点索引从 0 连续、首尾对应有向端点、累计距离单调，`length` 等于末点距离。
 
 ### 浏览器实时通信 (WebSocket)
 
@@ -582,7 +624,7 @@ release-output/roc-system-v0.2.1-amd64.bundle.tar
 release-output/roc-system-v0.2.1-amd64.bundle.tar.sha256
 ```
 
-交付包同时包含版本化的 `migrations/` SQL，便于运行主机在切换应用容器前对现有数据库执行待应用迁移。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
+交付包同时包含版本化的 `migrations/` SQL、README/CHANGELOG、`contracts/` OpenAPI/Schema 快照及其 `SHA256SUMS`；精确源码 commit 记录在 `RELEASE-MANIFEST.txt`。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
 
 ```bash
 sha256sum -c roc-system-v0.2.1-amd64.bundle.tar.sha256
@@ -591,12 +633,23 @@ tar -xf roc-system-v0.2.1-amd64.bundle.tar -C roc-system-v0.2.1
 cd roc-system-v0.2.1
 bash deploy.sh --prepare
 # 编辑 release.env，填写 DB_PASSWORD、JWT_SECRET、Origin 和端口
+# 已有数据库先按以下顺序迁移；--install 不自动迁移旧数据。
 bash deploy.sh --install
 ```
 
 `deploy.sh --install` 会校验运行主机 CPU 架构、内部镜像包和 manifest，执行 `docker load`，再以 `--no-build --pull never` 启动三个服务。release Compose 没有 `build:` 和源码挂载，因此不会在运行主机编译或访问镜像仓库。首次从旧 Compose 迁移时，如同名的 `roc-frontend`、`roc-backend`、`roc-postgres` 容器已存在，应先停止并移除这三个旧容器，但不要删除任何数据卷；后续 release 均使用固定项目名 `roc-system`，可直接滚动重建容器。
 
 旧独立数据库脚本默认使用 `roc_postgres_data`，旧 Compose 默认使用 `roc_pgdata`。迁移前必须用 `docker volume ls` 和旧容器的 mount 信息确认实际卷名，再填写 `POSTGRES_DOCKER_VOLUME` 与 `BACKEND_MAP_VOLUME`。`REQUIRE_EXISTING_DATA_VOLUMES=true` 会在卷不存在时拒绝启动，防止误建空数据库；只有确认是全新安装时才改为 `false`。
+
+#### 本轮升级与回滚
+
+1. 记录当前容器镜像 ID、源码 commit、数据卷名和迁移版本；保留旧镜像和配置，不覆盖现有 DB/JWT/Device 凭据。先由云备份覆盖数据库与地图卷。
+2. 已有部署暂停后端写入并保留 PostgreSQL；按编号执行尚未应用的迁移。`010_map_sources.sql` 增加原始地图来源，`011_resource_packages.sql` 增加地图包/文件清单，`012_deployment_event_replay.sql` 增加事件正文/摘要/attempt/原 lease 摘要和到期时间。迁移 012 可重复执行，不伪造历史事件的重放证据。
+3. 执行迁移示例（沿用实际数据库容器/用户名/库名；不在命令中填写密码）：`docker exec -i roc-postgres psql -v ON_ERROR_STOP=1 -U roc_user -d roc_db < migrations/012_deployment_event_replay.sql`。首次安装则使用新版初始化；已有卷不会再次运行 init.sql。
+4. 校验 `contracts/SHA256SUMS` 与 bundle 校验文件，再加载并启动新版镜像；检查 `/api/health`、`/api/db/ping`、登录、地图包下发与路网版本。
+5. 应用回滚时切回已记录的旧镜像与旧配置，保留新增列/表，不执行破坏性逆迁移。已生成 v2 资源或新任务时，旧应用不一定能正确消费；先暂停相关任务并核对兼容性，必要时使用配套数据库与地图卷快照恢复，不能只恢复其中一项。
+
+迁移前的状态事件缺少完整重放证据，重放返回 `event_conflict`；升级后不能推定旧 Outbox 已成功，需要人工核对任务与交付事实。后端轮换 JWT_SECRET 还可能使活动租约的重复 accept 无法重建，应在另一次维护窗口单独处理，不与本轮升级混用。
 
 构建包本身不包含数据库口令、JWT 密钥或证书；根目录 `.dockerignore` 也会阻止本地环境文件、私钥、构建结果和测试报告进入 Docker 构建上下文。release 构建默认拒绝存在未提交变更的工作区，并把精确 Git commit 写入 manifest。`release.env` 只在运行主机创建，并应保持 `0600` 权限。数据库备份继续由云服务器快照/备份服务负责，至少覆盖配置的 PostgreSQL 数据卷和地图制品卷。
 
@@ -620,7 +673,7 @@ BACKEND_LISTEN_PORT=8080 DB_HOST=127.0.0.1 JWT_SECRET=my-secret \
 
 ## 验证与发布门禁
 
-当前代码基线包含 6 个 CTest 后端测试、45 个 Vitest 前端单元/组件测试和 2 个 Playwright 画布/键盘测试。组件测试覆盖登录提交与错误映射、注册表单校验、邀请码规范化/失败状态、邀请码服务端分页交互、地图中文文件名/30 MiB 边界，以及通用错误态重试。发布前至少执行：
+当前代码基线包含 8 个 CTest 后端测试、54 个 Vitest 前端单元/组件测试和 4 个 Playwright 端到端测试。组件测试覆盖登录提交与错误映射、注册表单校验、邀请码规范化/失败状态、邀请码服务端分页交互、地图中文文件名/30 MiB 边界，以及通用错误态重试；后端合同测试覆盖设备 sequence、status 条件、REST 专用响应、下行 WebSocket Schema 和固定错误矩阵。Release 模式同样启用测试断言。发布前至少执行：
 
 ```bash
 # 后端（Linux 构建主机）
@@ -638,7 +691,7 @@ corepack pnpm run build
 corepack pnpm run test:e2e
 ```
 
-API 合同测试会校验 OpenAPI 与四份 JSON Schema，并确认 50 个 REST 操作的路由、认证和唯一 `operationId`。邀请码的有效注册、重复使用拒绝和撤销后拒绝已完成人工验收，登录、注册、邀请码和错误态组件测试也已通过；两个并发注册请求争用同一码时最多一个成功，仍需数据库/API 自动化。目标主机还应运行全链路 API、断线重连/租约恢复与交付异常冒烟测试。如果云测试机本身是非特权容器，嵌套 Docker 构建可能因 `unshare: operation not permitted` 被宿主机禁止；这项必须在支持 Docker namespace 的独立构建机或 CI 上完成。
+API 合同测试会校验 OpenAPI 与四份 JSON Schema，并确认 50 个 REST 操作的路由、认证和唯一 `operationId`。邀请码有效、重复、撤销及并发单次消费已完成人工验收；更大规模压力测试为可选项。T17 隔离 PostgreSQL/API/模拟器回归覆盖离线排队、多轮重连、重复 sequence、固定版本拒绝、数据库/后端重启、跨 attempt 进度、原事件重放、真实进程崩溃、磁盘写失败、截断/哈希错误/文件缺失、取消、越权和 Token 撤销。Python 模拟器另有 7 项恢复与资源合同测试；临时故障脚本按仓库约定不提交，测试入口和结果写入交付记录。Playwright 使用模拟业务接口，不替代真实设备链路回归。生产 TLS、30 分钟长稳及云备份恢复演练仍为后续项。
 
 ## 用户角色
 

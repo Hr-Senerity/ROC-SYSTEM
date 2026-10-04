@@ -12,6 +12,7 @@
 
 #include "controllers/DeviceWsController.h"
 #include "controllers/StatusWsController.h"
+#include "protocols/DeploymentTaskProtocol.h"
 #include "services/DeploymentService.h"
 #include "utils/InputValidation.h"
 #include "utils/JwtHelper.h"
@@ -36,6 +37,11 @@ Json::Value errorBody(const std::string &code, const std::string &message) {
   return body;
 }
 
+Json::Value deviceErrorBody(int status, const std::string &code,
+                            const std::string &message) {
+  return roc::protocol::makeDeviceTaskError(status, code, message);
+}
+
 std::optional<Json::Value> accountPrincipal(const HttpRequestPtr &request,
                                             const std::string &secret) {
   const auto header = request->getHeader("Authorization");
@@ -54,6 +60,15 @@ bool validUuid(const std::string &value,
                const std::string &field) {
   if (roc::utils::isUuid(value)) return true;
   callback(jsonResponse(400, errorBody("invalid_id", field + " must be a UUID")));
+  return false;
+}
+
+bool validDeviceUuid(const std::string &value,
+                     const std::function<void(const HttpResponsePtr &)> &callback,
+                     const std::string &field) {
+  if (roc::utils::isUuid(value)) return true;
+  callback(jsonResponse(
+      400, deviceErrorBody(400, "invalid_id", field + " must be a UUID")));
   return false;
 }
 
@@ -228,14 +243,15 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
       [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &taskId) {
-        if (!validUuid(taskId, callback, "task_id")) return;
+        if (!validDeviceUuid(taskId, callback, "task_id")) return;
         try {
           roc::service::DeploymentService service(
               connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
-                401, errorBody("authentication_failed", "Invalid device token")));
+                401, deviceErrorBody(401, "authentication_failed",
+                                     "Invalid device token")));
             return;
           }
           auto result = service.acceptTask(*device, taskId);
@@ -248,7 +264,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         } catch (const std::exception &error) {
           LOG_ERROR << "Accept device task error: " << error.what();
           callback(jsonResponse(
-              500, errorBody("internal_error", "Unable to accept task")));
+              500, deviceErrorBody(500, "internal_error",
+                                   "Unable to accept task")));
         }
       },
       {Post});
@@ -258,14 +275,15 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
       [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &taskId) {
-        if (!validUuid(taskId, callback, "task_id")) return;
+        if (!validDeviceUuid(taskId, callback, "task_id")) return;
         try {
           roc::service::DeploymentService service(
               connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
-                401, errorBody("authentication_failed", "Invalid device token")));
+                401, deviceErrorBody(401, "authentication_failed",
+                                     "Invalid device token")));
             return;
           }
           sendResult(service.getManifest(
@@ -274,7 +292,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         } catch (const std::exception &error) {
           LOG_ERROR << "Get device manifest error: " << error.what();
           callback(jsonResponse(
-              500, errorBody("internal_error", "Unable to read manifest")));
+              500, deviceErrorBody(500, "internal_error",
+                                   "Unable to read manifest")));
         }
       },
       {Get});
@@ -285,14 +304,15 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
           const HttpRequestPtr &request,
           std::function<void(const HttpResponsePtr &)> &&callback,
           const std::string &taskId) {
-        if (!validUuid(taskId, callback, "task_id")) return;
+        if (!validDeviceUuid(taskId, callback, "task_id")) return;
         try {
           roc::service::DeploymentService service(
               connStr, jwtSecret, taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
-                401, errorBody("authentication_failed", "Invalid device token")));
+                401, deviceErrorBody(401, "authentication_failed",
+                                     "Invalid device token")));
             return;
           }
           const auto result = service.getArtifact(
@@ -303,8 +323,9 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
           }
           if (!request->getHeader("Range").empty()) {
             callback(jsonResponse(
-                416, errorBody("range_not_supported",
-                               "Partial artifact downloads are not supported")));
+                416, deviceErrorBody(
+                         416, "range_not_supported",
+                         "Partial artifact downloads are not supported")));
             return;
           }
           if (result.body["resource_type"].asString() == "road_network") {
@@ -324,14 +345,16 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
                                     .filename();
           if (fileName.empty() || fileName == "." || fileName == "..") {
             callback(jsonResponse(
-                404, errorBody("artifact_not_found", "Artifact not found")));
+                404, deviceErrorBody(404, "artifact_not_found",
+                                     "Artifact not found")));
             return;
           }
           const auto path = std::filesystem::path(mapDirectory) / fileName;
           std::error_code error;
           if (!std::filesystem::is_regular_file(path, error) || error) {
             callback(jsonResponse(
-                404, errorBody("artifact_not_found", "Artifact not found")));
+                404, deviceErrorBody(404, "artifact_not_found",
+                                     "Artifact not found")));
             return;
           }
           auto response = HttpResponse::newFileResponse(path.string());
@@ -345,7 +368,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         } catch (const std::exception &error) {
           LOG_ERROR << "Get device artifact error: " << error.what();
           callback(jsonResponse(
-              500, errorBody("internal_error", "Unable to read artifact")));
+              500, deviceErrorBody(500, "internal_error",
+                                   "Unable to read artifact")));
         }
       },
       {Get});
@@ -356,21 +380,23 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
           const HttpRequestPtr &request,
           std::function<void(const HttpResponsePtr &)> &&callback,
           const std::string &taskId, const std::string &fileId) {
-        if (!validUuid(taskId, callback, "task_id") ||
-            !validUuid(fileId, callback, "file_id")) return;
+        if (!validDeviceUuid(taskId, callback, "task_id") ||
+            !validDeviceUuid(fileId, callback, "file_id")) return;
         try {
           roc::service::DeploymentService service(connStr, jwtSecret,
                                                   taskLeaseSeconds);
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
-                401, errorBody("authentication_failed", "Invalid device token")));
+                401, deviceErrorBody(401, "authentication_failed",
+                                     "Invalid device token")));
             return;
           }
           if (!request->getHeader("Range").empty()) {
             callback(jsonResponse(
-                416, errorBody("range_not_supported",
-                               "Partial artifact downloads are not supported")));
+                416, deviceErrorBody(
+                         416, "range_not_supported",
+                         "Partial artifact downloads are not supported")));
             return;
           }
           const auto result = service.getArtifact(
@@ -384,14 +410,16 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
                                     .filename();
           if (fileName.empty() || fileName == "." || fileName == "..") {
             callback(jsonResponse(
-                404, errorBody("artifact_not_found", "Artifact not found")));
+                404, deviceErrorBody(404, "artifact_not_found",
+                                     "Artifact not found")));
             return;
           }
           const auto path = std::filesystem::path(mapDirectory) / fileName;
           std::error_code error;
           if (!std::filesystem::is_regular_file(path, error) || error) {
             callback(jsonResponse(
-                404, errorBody("artifact_not_found", "Artifact not found")));
+                404, deviceErrorBody(404, "artifact_not_found",
+                                     "Artifact not found")));
             return;
           }
           auto response = HttpResponse::newFileResponse(path.string());
@@ -403,7 +431,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         } catch (const std::exception &error) {
           LOG_ERROR << "Get device artifact file error: " << error.what();
           callback(jsonResponse(
-              500, errorBody("internal_error", "Unable to read artifact")));
+              500, deviceErrorBody(500, "internal_error",
+                                   "Unable to read artifact")));
         }
       },
       {Get});
@@ -413,19 +442,21 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
       [connStr, jwtSecret, taskLeaseSeconds](const HttpRequestPtr &request,
                            std::function<void(const HttpResponsePtr &)> &&callback,
                            const std::string &taskId) {
-        if (!validUuid(taskId, callback, "task_id")) return;
+        if (!validDeviceUuid(taskId, callback, "task_id")) return;
         const auto body = request->getJsonObject();
         if (!body || !body->isObject()) {
           callback(jsonResponse(
-              400, errorBody("invalid_json", "JSON object is required")));
+              400, deviceErrorBody(400, "invalid_json",
+                                   "JSON object is required")));
           return;
         }
-        const auto eventId = body->get("event_id", "").asString();
-        if (!validUuid(eventId, callback, "event_id")) return;
-        const auto state = body->get("state", "").asString();
-        if (!body->isMember("progress") || !(*body)["progress"].isInt()) {
+        roc::protocol::TaskStatusProtocolError protocolError;
+        const auto statusRequest =
+            roc::protocol::parseTaskStatusRequest(*body, &protocolError);
+        if (!statusRequest) {
           callback(jsonResponse(
-              400, errorBody("invalid_progress", "progress must be an integer")));
+              400, deviceErrorBody(400, protocolError.code,
+                                   protocolError.message)));
           return;
         }
 
@@ -435,14 +466,15 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
           const auto device = authenticateDevice(request, service);
           if (!device) {
             callback(jsonResponse(
-                401, errorBody("authentication_failed", "Invalid device token")));
+                401, deviceErrorBody(401, "authentication_failed",
+                                     "Invalid device token")));
             return;
           }
           auto result = service.updateTaskStatus(
-              *device, taskId, request->getHeader("X-Task-Lease"), eventId,
-              state, (*body)["progress"].asInt(),
-              body->get("error_code", "").asString(),
-              body->get("error_message", "").asString());
+              *device, taskId, request->getHeader("X-Task-Lease"),
+              statusRequest->eventId, statusRequest->state,
+              statusRequest->progress, statusRequest->errorCode,
+              statusRequest->errorMessage);
           if (result.ok()) {
             roc::ws::StatusWsController::broadcastProjectEvent(
                 "deployment_task_updated", device->projectId, "task",
@@ -452,7 +484,8 @@ void registerDeploymentRoutes(const roc::config::AppConfig &config,
         } catch (const std::exception &error) {
           LOG_ERROR << "Update device task error: " << error.what();
           callback(jsonResponse(
-              500, errorBody("internal_error", "Unable to update task")));
+              500, deviceErrorBody(500, "internal_error",
+                                   "Unable to update task")));
         }
       },
       {Post});

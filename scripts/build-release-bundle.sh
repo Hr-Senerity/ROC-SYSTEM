@@ -148,6 +148,14 @@ chmod +x "${STAGING_DIR}/deploy.sh"
 mkdir -p "${STAGING_DIR}/migrations"
 cp "${REPO_ROOT}"/postgres/migrations/*.sql \
   "${STAGING_DIR}/migrations/"
+mkdir -p "${STAGING_DIR}/contracts"
+cp "${REPO_ROOT}"/roc-backend/schemas/*.json "${STAGING_DIR}/contracts/"
+(
+  cd "${STAGING_DIR}/contracts"
+  sha256sum *.json > SHA256SUMS
+)
+cp "${REPO_ROOT}/README.md" "${STAGING_DIR}/README.md"
+cp "${REPO_ROOT}/CHANGELOG.rst" "${STAGING_DIR}/CHANGELOG.rst"
 mkdir -p "${STAGING_DIR}/certs/postgres"
 
 {

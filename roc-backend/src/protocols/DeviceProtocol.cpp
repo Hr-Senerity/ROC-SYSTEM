@@ -39,11 +39,14 @@ bool hasOnlyMembers(const Json::Value &object,
   return true;
 }
 
-bool parseSequence(const Json::Value &value, std::uint64_t *sequence) {
+bool parseSequence(const Json::Value &value, std::int64_t *sequence) {
   if (!sequence || !value.isString()) return false;
   const auto text = value.asString();
-  if (text.empty() || text.size() > 20) return false;
-  std::uint64_t parsed = 0;
+  if (text.empty() || text.size() > 19 || text.front() < '1' ||
+      text.front() > '9') {
+    return false;
+  }
+  std::int64_t parsed = 0;
   const auto result = std::from_chars(text.data(), text.data() + text.size(), parsed);
   if (result.ec != std::errc{} || result.ptr != text.data() + text.size() ||
       parsed == 0) {
@@ -127,9 +130,10 @@ std::optional<DeviceEnvelope> parseDeviceEnvelope(
     setError(error, "invalid_type", "type must be a non-empty string");
     return std::nullopt;
   }
-  std::uint64_t sequence = 0;
+  std::int64_t sequence = 0;
   if (!parseSequence(root["sequence"], &sequence)) {
-    setError(error, "invalid_sequence", "sequence must be a positive decimal string");
+    setError(error, "invalid_sequence",
+             "sequence must be a decimal string in 1..9223372036854775807");
     return std::nullopt;
   }
   static const std::regex kRfc3339(
@@ -244,7 +248,7 @@ std::string optionalLibraryVersion(
 }
 
 Json::Value makeDeviceMessage(const std::string &type,
-                              std::uint64_t serverSequence,
+                              std::int64_t serverSequence,
                               const Json::Value &payload) {
   Json::Value message;
   message["protocol_version"] = kDeviceProtocolVersion;
@@ -256,7 +260,7 @@ Json::Value makeDeviceMessage(const std::string &type,
   return message;
 }
 
-Json::Value makeDeviceAck(std::uint64_t serverSequence,
+Json::Value makeDeviceAck(std::int64_t serverSequence,
                           const DeviceEnvelope &envelope,
                           bool duplicate) {
   Json::Value payload;
@@ -267,7 +271,7 @@ Json::Value makeDeviceAck(std::uint64_t serverSequence,
   return makeDeviceMessage("ack", serverSequence, payload);
 }
 
-Json::Value makeDeviceError(std::uint64_t serverSequence,
+Json::Value makeDeviceError(std::int64_t serverSequence,
                             const std::string &code,
                             const std::string &message,
                             const std::string &messageId) {

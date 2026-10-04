@@ -35,7 +35,7 @@ struct DeviceSession {
   std::string projectId;
   std::string tokenHash;
   std::string libraryVersion;
-  std::uint64_t lastClientSequence{0};
+  std::int64_t lastClientSequence{0};
   std::chrono::steady_clock::time_point lastSeen{std::chrono::steady_clock::now()};
 };
 
@@ -44,12 +44,22 @@ std::map<drogon::WebSocketConnectionPtr, DeviceSession,
          std::owner_less<drogon::WebSocketConnectionPtr>> g_sessions;
 std::map<std::string, drogon::WebSocketConnectionPtr> g_vehicleConnections;
 std::string g_connStr;
-std::atomic<std::uint64_t> g_serverSequence{0};
+std::atomic<std::int64_t> g_serverSequence{0};
 int g_heartbeatIntervalSeconds{30};
 int g_idleTimeoutSeconds{45};
 
-std::uint64_t nextServerSequence() {
-  return g_serverSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+std::int64_t nextServerSequence() {
+  auto current = g_serverSequence.load(std::memory_order_relaxed);
+  for (;;) {
+    const auto next = current >= roc::protocol::kMaxProtocolSequence
+                          ? std::int64_t{1}
+                          : current + 1;
+    if (g_serverSequence.compare_exchange_weak(
+            current, next, std::memory_order_relaxed,
+            std::memory_order_relaxed)) {
+      return next;
+    }
+  }
 }
 
 std::string serialize(const Json::Value &value) {
@@ -108,7 +118,7 @@ std::optional<DeviceSession> authenticateDevice(
   }
   try {
     session.lastClientSequence =
-        std::stoull(vehicle["device_last_sequence"].asString());
+        std::stoll(vehicle["device_last_sequence"].asString());
   } catch (...) {
     return std::nullopt;
   }
@@ -124,7 +134,7 @@ std::optional<DeviceSession> sessionFor(
 }
 
 void updateSession(const drogon::WebSocketConnectionPtr &connection,
-                   std::uint64_t sequence,
+                   std::int64_t sequence,
                    const std::string &libraryVersion) {
   std::lock_guard<std::mutex> lock(g_mutex);
   const auto found = g_sessions.find(connection);
@@ -136,7 +146,7 @@ void updateSession(const drogon::WebSocketConnectionPtr &connection,
 }
 
 void scheduleIdleCheck(const drogon::WebSocketConnectionPtr &connection,
-                       std::uint64_t observedSequence) {
+                       std::int64_t observedSequence) {
   int idleTimeoutSeconds = 45;
   {
     std::lock_guard<std::mutex> lock(g_mutex);

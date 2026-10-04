@@ -62,6 +62,8 @@ add_executable(roc-backend-server
   src/middleware/AuthMiddleware.cpp
   src/middleware/AuthMiddleware.h
   src/protocols/common/types.h
+  src/protocols/DeploymentTaskProtocol.cpp
+  src/protocols/DeploymentTaskProtocol.h
   src/protocols/DeviceProtocol.cpp
   src/protocols/DeviceProtocol.h
 )
@@ -85,6 +87,14 @@ if(BUILD_TESTING)
   target_include_directories(device-protocol-tests PRIVATE src)
   target_link_libraries(device-protocol-tests PRIVATE PkgConfig::JSONCPP)
   add_test(NAME device-protocol-tests COMMAND device-protocol-tests)
+
+  add_executable(deployment-task-protocol-tests
+    tests/DeploymentTaskProtocolTests.cpp
+    src/protocols/DeploymentTaskProtocol.cpp
+  )
+  target_include_directories(deployment-task-protocol-tests PRIVATE src)
+  target_link_libraries(deployment-task-protocol-tests PRIVATE PkgConfig::JSONCPP)
+  add_test(NAME deployment-task-protocol-tests COMMAND deployment-task-protocol-tests)
 
   add_executable(road-network-tests
     tests/RoadNetworkTests.cpp
@@ -138,4 +148,16 @@ if(BUILD_TESTING)
   target_include_directories(invitation-code-tests PRIVATE src)
   target_link_libraries(invitation-code-tests PRIVATE OpenSSL::Crypto)
   add_test(NAME invitation-code-tests COMMAND invitation-code-tests)
+
+  # Contract checks use assert(); Release builds must still execute them.
+  foreach(test_target IN ITEMS
+      device-protocol-tests deployment-task-protocol-tests road-network-tests
+      image-metadata-tests map-import-tests postgres-config-tests
+      api-contract-tests invitation-code-tests)
+    if(MSVC)
+      target_compile_options(${test_target} PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${test_target} PRIVATE -UNDEBUG)
+    endif()
+  endforeach()
 endif()

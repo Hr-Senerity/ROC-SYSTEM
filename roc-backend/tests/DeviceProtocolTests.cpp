@@ -1,7 +1,9 @@
 #include "protocols/DeviceProtocol.h"
 
 #include <cassert>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -32,6 +34,14 @@ std::string telemetry() {
       "\"velocity\":{\"linear\":0.8,\"angular\":-0.1}}}";
 }
 
+std::string heartbeatWithSequence(const std::string &sequence) {
+  auto message = heartbeat();
+  const auto marker = message.find("\"sequence\":\"1\"");
+  assert(marker != std::string::npos);
+  message.replace(marker, 14, "\"sequence\":\"" + sequence + "\"");
+  return message;
+}
+
 }  // namespace
 
 int main() {
@@ -42,6 +52,21 @@ int main() {
   assert(heartbeatEnvelope->sequence == 1);
   assert(roc::protocol::optionalLibraryVersion(*heartbeatEnvelope, &error) ==
          "0.1.0");
+
+  error = {};
+  const auto maximumSequence = roc::protocol::parseDeviceEnvelope(
+      heartbeatWithSequence("9223372036854775807"), &error);
+  assert(maximumSequence);
+  assert(maximumSequence->sequence ==
+         std::numeric_limits<std::int64_t>::max());
+
+  for (const auto &invalidSequence : {"0", "01", "9223372036854775808",
+                                      "18446744073709551615", "-1", "+1"}) {
+    error = {};
+    assert(!roc::protocol::parseDeviceEnvelope(
+        heartbeatWithSequence(invalidSequence), &error));
+    assert(error.code == "invalid_sequence");
+  }
 
   error = {};
   const auto telemetryEnvelope =

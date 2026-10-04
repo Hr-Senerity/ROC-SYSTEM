@@ -10,6 +10,7 @@
 
 #include <pqxx/pqxx>
 
+#include "protocols/DeploymentTaskProtocol.h"
 #include "utils/JwtHelper.h"
 #include "utils/PasswordHash.h"
 
@@ -24,6 +25,12 @@ DeploymentResult fail(int status, const std::string &code,
   result.body["code"] = code;
   result.body["message"] = message;
   return result;
+}
+
+DeploymentResult deviceFail(int status, const std::string &code,
+                            const std::string &message) {
+  return {status,
+          roc::protocol::makeDeviceTaskError(status, code, message)};
 }
 
 Json::Value parseJson(const std::string &text) {
@@ -101,6 +108,27 @@ void appendEvent(pqxx::work &tx, const std::string &taskId,
       toState, progress, code, message);
 }
 
+void appendDeviceStatusEvent(
+    pqxx::work &tx, const std::string &taskId,
+    const std::string &fromState,
+    const roc::protocol::TaskStatusRequest &request,
+    const std::string &requestBody, const std::string &requestDigest,
+    int attempt, const std::string &leaseTokenHash,
+    long long leaseExpiresAt) {
+  tx.exec_params(
+      "INSERT INTO deployment_events "
+      "(task_id, sequence, actor, device_event_id, from_state, to_state, "
+      "progress, code, message, request_body, request_digest, attempt, "
+      "lease_token_hash, lease_expires_at) VALUES "
+      "($1::uuid, $2, 'device', $3::uuid, NULLIF($4, ''), $5, $6, "
+      "NULLIF($7, ''), NULLIF($8, ''), $9::jsonb, $10, $11, $12, "
+      "TO_TIMESTAMP($13))",
+      taskId, nextEventSequence(tx, taskId), request.eventId, fromState,
+      request.state, request.progress, request.errorCode,
+      request.errorMessage, requestBody, requestDigest, attempt,
+      leaseTokenHash, leaseExpiresAt);
+}
+
 std::string makeLease(const std::string &secret, const std::string &taskId,
                       const std::string &vehicleId, int attempt,
                       long long expiresAt) {
@@ -118,8 +146,15 @@ const char *kTaskSelect =
     "t.attempt, t.max_attempts, t.lease_token_hash, "
     "EXTRACT(EPOCH FROM t.lease_expires_at)::bigint AS lease_exp_epoch, "
     "t.progress, t.error_code, t.error_message, "
-    "t.offered_at::text, t.accepted_at::text, t.delivered_at::text, "
-    "t.updated_at::text, b.project_id::text, b.resource_type, "
+    "TO_CHAR(t.offered_at AT TIME ZONE 'UTC', "
+    "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS offered_at, "
+    "TO_CHAR(t.accepted_at AT TIME ZONE 'UTC', "
+    "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS accepted_at, "
+    "TO_CHAR(t.delivered_at AT TIME ZONE 'UTC', "
+    "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS delivered_at, "
+    "TO_CHAR(t.updated_at AT TIME ZONE 'UTC', "
+    "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at, "
+    "b.project_id::text, b.resource_type, "
     "b.resource_revision_id::text, "
     "COALESCE(r.map_id, a.map_id)::text AS resource_map_id, "
     "COALESCE(r.content_type, a.content_type) AS content_type, "
@@ -191,21 +226,24 @@ DeploymentResult authorizedTask(pqxx::work &tx, const DeviceIdentity &device,
                                  "WHERE t.id = $1::uuid AND "
                                  "t.vehicle_id = $2::uuid FOR UPDATE OF t",
                              taskId, device.vehicleId);
-  if (rows.empty()) return fail(404, "not_found", "Task not found");
+  if (rows.empty()) {
+    return deviceFail(404, "task_not_found", "Task not found");
+  }
   const auto &row = rows[0];
   const auto state = value(row, "state");
   if (state != "accepted" && state != "downloading" &&
       state != "delivering") {
-    return fail(409, "invalid_state", "Task does not hold an active lease");
+    return deviceFail(409, "invalid_state",
+                      "Task does not hold an active lease");
   }
   if (row["lease_exp_epoch"].is_null() ||
       row["lease_exp_epoch"].as<long long>() <
           static_cast<long long>(std::time(nullptr))) {
-    return fail(409, "lease_expired", "Task lease has expired");
+    return deviceFail(409, "lease_expired", "Task lease has expired");
   }
   if (leaseToken.empty() ||
       roc::utils::sha256Hex(leaseToken) != value(row, "lease_token_hash")) {
-    return fail(401, "invalid_lease", "Task lease is invalid");
+    return deviceFail(401, "invalid_lease", "Task lease is invalid");
   }
   *rowsOut = std::move(rows);
   return {200, Json::Value(Json::objectValue)};
@@ -363,7 +401,8 @@ std::vector<Json::Value> DeploymentService::offerPendingTasks(
     const auto attempt = task["attempt"].as<int>();
     const auto maxAttempts = task["max_attempts"].as<int>();
     const auto progress = task["progress"].as<int>();
-    const bool canRetry = oldState != "delivering" && attempt < maxAttempts;
+    const bool canRetry = roc::protocol::expiredLeaseCanRetry(
+        oldState, attempt, maxAttempts);
     const auto nextState = canRetry ? "offered" : "failed";
     tx.exec_params(
         "UPDATE deployment_tasks SET state = $2::varchar(24), lease_token_hash = NULL, "
@@ -425,7 +464,9 @@ DeploymentResult DeploymentService::acceptTask(
                                  "WHERE t.id = $1::uuid AND "
                                  "t.vehicle_id = $2::uuid FOR UPDATE OF t",
                              taskId, device.vehicleId);
-  if (rows.empty()) return fail(404, "not_found", "Task not found");
+  if (rows.empty()) {
+    return deviceFail(404, "task_not_found", "Task not found");
+  }
   const auto &row = rows[0];
   const auto currentState = value(row, "state");
   const auto now = static_cast<long long>(std::time(nullptr));
@@ -434,10 +475,11 @@ DeploymentResult DeploymentService::acceptTask(
       row["lease_exp_epoch"].as<long long>() >= now) {
     const auto expiresAt = row["lease_exp_epoch"].as<long long>();
     const auto token =
-        makeLease(jwtSecret_, taskId, device.vehicleId,
+        makeLease(jwtSecret_, value(row, "id"), device.vehicleId,
                   row["attempt"].as<int>(), expiresAt);
     if (roc::utils::sha256Hex(token) != value(row, "lease_token_hash")) {
-      return fail(409, "lease_conflict", "Stored lease cannot be reissued");
+      return deviceFail(409, "lease_conflict",
+                        "Stored lease cannot be reissued");
     }
     Json::Value body;
     body["ok"] = true;
@@ -449,9 +491,14 @@ DeploymentResult DeploymentService::acceptTask(
     return {200, body};
   }
 
-  if (currentState != "offered" && currentState != "queued" &&
-      currentState != "accepted") {
-    return fail(409, "invalid_state", "Task cannot be accepted in its state");
+  if (currentState == "accepted") {
+    return deviceFail(409, "lease_expired",
+                      "Accepted task must be offered again after lease expiry");
+  }
+
+  if (currentState != "offered") {
+    return deviceFail(409, "invalid_state",
+                      "Task cannot be accepted in its state");
   }
 
   const auto attempt = row["attempt"].as<int>() + 1;
@@ -467,13 +514,14 @@ DeploymentResult DeploymentService::acceptTask(
                 row["progress"].as<int>(), "attempts_exhausted",
                 "Task exceeded its delivery attempt limit");
     tx.commit();
-    return fail(409, "attempts_exhausted",
-                "Task exceeded its delivery attempt limit");
+    return deviceFail(409, "attempts_exhausted",
+                      "Task exceeded its delivery attempt limit");
   }
 
   const auto expiresAt = now + leaseSeconds_;
   const auto token =
-      makeLease(jwtSecret_, taskId, device.vehicleId, attempt, expiresAt);
+      makeLease(jwtSecret_, value(row, "id"), device.vehicleId, attempt,
+                expiresAt);
   tx.exec_params(
       "UPDATE deployment_tasks SET state = 'accepted', attempt = $2, "
       "lease_token_hash = $3, "
@@ -591,22 +639,34 @@ DeploymentResult DeploymentService::getArtifact(
       static_cast<Json::Int64>(row["byte_size"].as<long long>());
   body["sha256"] = value(row, "sha256");
   if (value(row, "resource_type") == "road_network") {
-    if (!fileId.empty()) return fail(404, "artifact_not_found", "Artifact file not found");
+    if (!fileId.empty()) {
+      return deviceFail(404, "artifact_not_found",
+                        "Artifact file not found");
+    }
     body["network"] = parseJson(value(row, "network_json"));
   } else {
     if (!row["package_version"].is_null() && row["package_version"].as<int>() == 2) {
-      if (fileId.empty()) return fail(409, "file_id_required", "Map package files must be downloaded by file id");
+      if (fileId.empty()) {
+        return deviceFail(409, "file_id_required",
+                          "Map package files must be downloaded by file id");
+      }
       const auto files = tx.exec_params(
           "SELECT storage_key, content_type, byte_size, sha256 FROM map_artifact_files "
           "WHERE id = $1::uuid AND artifact_id = $2::uuid",
           fileId, value(row, "resource_revision_id"));
-      if (files.empty()) return fail(404, "artifact_not_found", "Artifact file not found");
+      if (files.empty()) {
+        return deviceFail(404, "artifact_not_found",
+                          "Artifact file not found");
+      }
       body["storage_key"] = value(files[0], "storage_key");
       body["content_type"] = value(files[0], "content_type");
       body["byte_size"] = static_cast<Json::Int64>(files[0]["byte_size"].as<long long>());
       body["sha256"] = value(files[0], "sha256");
     } else {
-      if (!fileId.empty()) return fail(404, "artifact_not_found", "Artifact file not found");
+      if (!fileId.empty()) {
+        return deviceFail(404, "artifact_not_found",
+                          "Artifact file not found");
+      }
       body["storage_key"] = value(row, "storage_key");
     }
   }
@@ -625,16 +685,58 @@ DeploymentResult DeploymentService::updateTaskStatus(
                                  "WHERE t.id = $1::uuid AND "
                                  "t.vehicle_id = $2::uuid FOR UPDATE OF t",
                              taskId, device.vehicleId);
-  if (rows.empty()) return fail(404, "not_found", "Task not found");
+  if (rows.empty()) {
+    return deviceFail(404, "task_not_found", "Task not found");
+  }
+
+  roc::protocol::TaskStatusRequest statusRequest;
+  statusRequest.eventId = eventId;
+  statusRequest.state = state;
+  statusRequest.progress = progress;
+  statusRequest.errorCode = errorCode;
+  statusRequest.errorMessage = errorMessage;
+  statusRequest.eventId =
+      roc::protocol::canonicalTaskStatusRequest(statusRequest)["event_id"]
+          .asString();
+  const auto canonicalRequest =
+      roc::protocol::canonicalTaskStatusRequestJson(statusRequest);
+  const auto requestDigest = roc::utils::sha256Hex(canonicalRequest);
+  const auto suppliedLeaseHash = leaseToken.empty()
+                                     ? std::string{}
+                                     : roc::utils::sha256Hex(leaseToken);
+
+  // The database index is global, so serialize the same event key even when
+  // two different task rows are being updated concurrently. The loser can
+  // then return the frozen event_conflict response instead of leaking a
+  // unique-constraint failure as HTTP 500.
+  tx.exec_params(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      statusRequest.eventId);
 
   const auto duplicate = tx.exec_params(
-      "SELECT task_id::text FROM deployment_events "
+      "SELECT task_id::text, request_digest, lease_token_hash, "
+      "request_body = $2::jsonb AS body_matches "
+      "FROM deployment_events "
       "WHERE device_event_id = $1::uuid",
-      eventId);
+      statusRequest.eventId, canonicalRequest);
   if (!duplicate.empty()) {
-    if (duplicate[0][0].as<std::string>() != taskId) {
-      return fail(409, "event_conflict",
-                  "event_id already belongs to another task");
+    if (value(duplicate[0], "task_id") != value(rows[0], "id")) {
+      return deviceFail(409, "event_conflict",
+                        "event_id already belongs to another task");
+    }
+    if (duplicate[0]["body_matches"].is_null() ||
+        !duplicate[0]["body_matches"].as<bool>() ||
+        value(duplicate[0], "request_digest").empty() ||
+        value(duplicate[0], "request_digest") != requestDigest) {
+      return deviceFail(
+          409, "event_conflict",
+          "event_id replay must use the original normalized request body");
+    }
+    if (suppliedLeaseHash.empty() ||
+        value(duplicate[0], "lease_token_hash") != suppliedLeaseHash) {
+      return deviceFail(
+          401, "invalid_lease",
+          "event_id replay must use the lease that created the event");
     }
     Json::Value body;
     body["ok"] = true;
@@ -650,45 +752,40 @@ DeploymentResult DeploymentService::updateTaskStatus(
   const auto now = static_cast<long long>(std::time(nullptr));
   if (currentState != "accepted" && currentState != "downloading" &&
       currentState != "delivering") {
-    return fail(409, "invalid_state", "Task does not hold an active lease");
+    return deviceFail(409, "invalid_state",
+                      "Task does not hold an active lease");
   }
   if (row["lease_exp_epoch"].is_null() ||
       row["lease_exp_epoch"].as<long long>() < now) {
-    return fail(409, "lease_expired", "Task lease has expired");
+    return deviceFail(409, "lease_expired", "Task lease has expired");
   }
   if (leaseToken.empty() ||
-      roc::utils::sha256Hex(leaseToken) != value(row, "lease_token_hash")) {
-    return fail(401, "invalid_lease", "Task lease is invalid");
+      suppliedLeaseHash != value(row, "lease_token_hash")) {
+    return deviceFail(401, "invalid_lease", "Task lease is invalid");
   }
 
-  bool transitionAllowed = false;
-  if (currentState == "accepted") {
-    transitionAllowed = state == "downloading" || state == "failed";
-  } else if (currentState == "downloading") {
-    transitionAllowed =
-        state == "downloading" || state == "delivering" || state == "failed";
-  } else if (currentState == "delivering") {
-    transitionAllowed =
-        state == "delivering" || state == "delivered" || state == "failed";
+  if (!roc::protocol::taskStatusTransitionAllowed(currentState, state)) {
+    return deviceFail(409, "invalid_transition",
+                      "Requested task state transition is not allowed");
   }
-  if (!transitionAllowed) {
-    return fail(409, "invalid_transition",
-                "Requested task state transition is not allowed");
-  }
-  if (progress < row["progress"].as<int>() || progress > 100) {
-    return fail(400, "invalid_progress",
-                "progress must be monotonic and between 0 and 100");
+  if (!roc::protocol::taskProgressAllowed(row["progress"].as<int>(),
+                                          progress)) {
+    return deviceFail(400, "invalid_progress",
+                      "progress must be monotonic and between 0 and 100");
   }
   if (state == "delivered" && progress != 100) {
-    return fail(400, "invalid_progress",
-                "delivered tasks must report progress 100");
+    return deviceFail(400, "invalid_progress",
+                      "delivered tasks must report progress 100");
   }
   if (state == "failed" && errorCode.empty()) {
-    return fail(400, "error_code_required",
-                "failed tasks must provide error_code");
+    return deviceFail(400, "error_code_required",
+                      "failed tasks must provide error_code");
   }
 
   const bool terminal = state == "delivered" || state == "failed";
+  const auto eventAttempt = row["attempt"].as<int>();
+  const auto eventLeaseHash = value(row, "lease_token_hash");
+  const auto eventLeaseExpiresAt = row["lease_exp_epoch"].as<long long>();
   tx.exec_params(
       "UPDATE deployment_tasks SET state = $2::varchar(24), progress = $3, "
       "error_code = NULLIF($4, ''), error_message = NULLIF($5, ''), "
@@ -698,8 +795,9 @@ DeploymentResult DeploymentService::updateTaskStatus(
       "lease_expires_at = CASE WHEN $6 THEN NULL ELSE lease_expires_at END, "
       "updated_at = NOW() WHERE id = $1::uuid",
       taskId, state, progress, errorCode, errorMessage, terminal);
-  appendEvent(tx, taskId, "device", currentState, state, progress, errorCode,
-              errorMessage, eventId);
+  appendDeviceStatusEvent(tx, taskId, currentState, statusRequest,
+                          canonicalRequest, requestDigest, eventAttempt,
+                          eventLeaseHash, eventLeaseExpiresAt);
 
   if (state == "delivered") {
     if (value(row, "resource_type") == "road_network") {

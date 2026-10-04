@@ -398,7 +398,14 @@
         "tags": ["Device tasks"],
         "summary": "Accept a task and receive or replay its lease",
         "security": [{ "deviceAuthorization": [] }],
-        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "description": "Task accepted or active lease replayed", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/acceptResponse" } } } },
+          "400": { "$ref": "#/components/responses/DeviceBadRequest" },
+          "401": { "$ref": "#/components/responses/DeviceUnauthorized" },
+          "404": { "$ref": "#/components/responses/DeviceNotFound" },
+          "409": { "$ref": "#/components/responses/DeviceConflict" },
+          "500": { "$ref": "#/components/responses/DeviceServerError" }
+        }
       }
     },
     "/api/device/tasks/{taskId}/manifest": {
@@ -410,9 +417,11 @@
         "security": [{ "deviceAuthorization": [] }],
         "responses": {
           "200": { "description": "Manifest", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/manifestResponse" } } } },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" }
+          "400": { "$ref": "#/components/responses/DeviceBadRequest" },
+          "401": { "$ref": "#/components/responses/DeviceUnauthorized" },
+          "404": { "$ref": "#/components/responses/DeviceNotFound" },
+          "409": { "$ref": "#/components/responses/DeviceConflict" },
+          "500": { "$ref": "#/components/responses/DeviceServerError" }
         }
       }
     },
@@ -426,10 +435,12 @@
         "security": [{ "deviceAuthorization": [] }],
         "responses": {
           "200": { "description": "Complete immutable artifact", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }, "content": { "application/vnd.roc.road-network+json": { "schema": { "$ref": "./road-network-v1.schema.json" } }, "application/vnd.roc.road-network.v2+json": { "schema": { "$ref": "./road-network-v2.schema.json" } }, "image/png": { "schema": { "type": "string", "contentEncoding": "binary" } }, "image/jpeg": { "schema": { "type": "string", "contentEncoding": "binary" } } } },
-          "401": { "$ref": "#/components/responses/Error" },
-          "403": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "416": { "$ref": "#/components/responses/Error" }
+          "400": { "$ref": "#/components/responses/DeviceBadRequest" },
+          "401": { "$ref": "#/components/responses/DeviceUnauthorized" },
+          "404": { "$ref": "#/components/responses/DeviceNotFound" },
+          "409": { "$ref": "#/components/responses/DeviceConflict" },
+          "416": { "$ref": "#/components/responses/DeviceRangeError" },
+          "500": { "$ref": "#/components/responses/DeviceServerError" }
         }
       }
     },
@@ -447,10 +458,12 @@
         "security": [{ "deviceAuthorization": [] }],
         "responses": {
           "200": { "description": "Complete immutable package file", "headers": { "X-Content-SHA256": { "required": true, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } } },
-          "401": { "$ref": "#/components/responses/Error" },
-          "404": { "$ref": "#/components/responses/Error" },
-          "409": { "$ref": "#/components/responses/Error" },
-          "416": { "$ref": "#/components/responses/Error" }
+          "400": { "$ref": "#/components/responses/DeviceBadRequest" },
+          "401": { "$ref": "#/components/responses/DeviceUnauthorized" },
+          "404": { "$ref": "#/components/responses/DeviceNotFound" },
+          "409": { "$ref": "#/components/responses/DeviceConflict" },
+          "416": { "$ref": "#/components/responses/DeviceRangeError" },
+          "500": { "$ref": "#/components/responses/DeviceServerError" }
         }
       }
     },
@@ -462,7 +475,14 @@
         "summary": "Idempotently report download or delivery status",
         "security": [{ "deviceAuthorization": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/statusRequest" } } } },
-        "responses": { "200": { "$ref": "#/components/responses/JsonSuccess" }, "400": { "$ref": "#/components/responses/Error" }, "401": { "$ref": "#/components/responses/Error" }, "403": { "$ref": "#/components/responses/Error" }, "409": { "$ref": "#/components/responses/Error" } }
+        "responses": {
+          "200": { "description": "Status accepted or exact event replayed", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/statusResponse" } } } },
+          "400": { "$ref": "#/components/responses/DeviceBadRequest" },
+          "401": { "$ref": "#/components/responses/DeviceUnauthorized" },
+          "404": { "$ref": "#/components/responses/DeviceNotFound" },
+          "409": { "$ref": "#/components/responses/DeviceConflict" },
+          "500": { "$ref": "#/components/responses/DeviceServerError" }
+        }
       }
     },
     "/api/admin/users": {
@@ -584,7 +604,13 @@
     "responses": {
       "JsonSuccess": { "description": "Successful JSON response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JsonSuccess" } } } },
       "AuthSuccess": { "description": "Authentication succeeded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthSuccess" } } } },
-      "Error": { "description": "Structured error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+      "Error": { "description": "Structured account or administration error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "DeviceBadRequest": { "description": "Device request shape or value is invalid", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/deviceBadRequestError" } } } },
+      "DeviceUnauthorized": { "description": "Device token or task lease is invalid", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/deviceUnauthorizedError" } } } },
+      "DeviceNotFound": { "description": "Task or immutable artifact was not found", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/deviceNotFoundError" } } } },
+      "DeviceConflict": { "description": "Task state, lease, event, attempt or artifact selection conflicts with the request", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/deviceConflictError" } } } },
+      "DeviceRangeError": { "description": "Partial artifact downloads are unsupported", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/deviceRangeError" } } } },
+      "DeviceServerError": { "description": "Unexpected server failure", "content": { "application/json": { "schema": { "$ref": "./deployment-task-v1.schema.json#/$defs/deviceServerError" } } } }
     }
   }
 }

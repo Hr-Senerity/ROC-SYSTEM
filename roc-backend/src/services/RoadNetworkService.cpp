@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -49,6 +50,9 @@ bool finiteNumber(const Json::Value &value) {
 
 double rounded(double value) {
   constexpr double scale = 1000000.0;
+  if (std::abs(value) > std::numeric_limits<double>::max() / scale) {
+    return value;
+  }
   const auto result = std::round(value * scale) / scale;
   return result == 0 ? 0 : result;
 }
@@ -124,9 +128,13 @@ std::vector<Point> sampleEdge(const Json::Value &edge, const Point &from,
     estimate = distance(from, control1) + distance(control1, control2) +
                distance(control2, to);
   }
+  const auto estimatedSegments = std::ceil(estimate / spacing);
+  if (!std::isfinite(estimatedSegments) ||
+      estimatedSegments > static_cast<double>(kMaxSamplesPerTrajectory - 1)) {
+    return {};
+  }
   const auto segments = std::max<std::size_t>(
-      1, static_cast<std::size_t>(std::ceil(estimate / spacing)));
-  if (segments + 1 > kMaxSamplesPerTrajectory) return {};
+      1, static_cast<std::size_t>(estimatedSegments));
   std::vector<Point> points;
   points.reserve(segments + 1);
   for (std::size_t index = 0; index <= segments; ++index) {
@@ -178,13 +186,14 @@ RoadNetworkValidation validateRoadNetwork(const Json::Value &network,
     const auto &sampling = network["sampling"];
     if (!sampling.isObject() ||
         !hasOnlyMembers(sampling, {"algorithm", "spacing", "precision"}) ||
+        !sampling["algorithm"].isString() ||
         sampling["algorithm"].asString() != "uniform-parameter-v1" ||
-        !finiteNumber(sampling["spacing"]) || sampling["spacing"].asDouble() <= 0 ||
+        !finiteNumber(sampling["spacing"]) || sampling["spacing"].asDouble() < 0.000001 ||
         sampling["spacing"].asDouble() > (coordinateMode == "metric" ? 100.0 : 1.0) ||
         !sampling["precision"].isInt() || sampling["precision"].asInt() != kPrecision) {
-      return fail("invalid_sampling", "sampling requires uniform-parameter-v1, positive spacing, and precision 6");
+      return fail("invalid_sampling", "sampling requires uniform-parameter-v1, spacing of at least 0.000001, and precision 6");
     }
-    spacing = sampling["spacing"].asDouble();
+    spacing = rounded(sampling["spacing"].asDouble());
   }
 
   std::unordered_set<std::string> nodeIds;
@@ -196,7 +205,7 @@ RoadNetworkValidation validateRoadNetwork(const Json::Value &network,
     if (!node.isObject() || !hasOnlyMembers(node, {"id", "x", "y", "kind", "label"}) ||
         !node["id"].isString() || !validIdentifier(node["id"].asString()) ||
         !finiteNumber(node["x"]) || !finiteNumber(node["y"]) ||
-        node["kind"].asString() != "waypoint" || !node["label"].isString() ||
+        !node["kind"].isString() || node["kind"].asString() != "waypoint" || !node["label"].isString() ||
         node["label"].asString().size() > 128) {
       return fail("invalid_node", prefix + " has an invalid shape");
     }
@@ -213,7 +222,7 @@ RoadNetworkValidation validateRoadNetwork(const Json::Value &network,
   }
 
   std::unordered_set<std::string> edgeIds;
-  std::unordered_set<std::string> edgeKeys;
+  std::unordered_set<std::string> directedConnections;
   std::vector<Json::Value> edges;
   for (Json::ArrayIndex index = 0; index < network["edges"].size(); ++index) {
     const auto &edge = network["edges"][index];
@@ -232,13 +241,21 @@ RoadNetworkValidation validateRoadNetwork(const Json::Value &network,
     if (!edgeIds.insert(id).second) return fail("duplicate_edge", "duplicate edge id: " + id);
     if (nodeIds.count(from) == 0 || nodeIds.count(to) == 0) return fail("dangling_edge", prefix + " references a missing node");
     if (from == to) return fail("self_loop", prefix + " cannot connect a node to itself");
-    if (edge["direction"].asString() != "both" && edge["direction"].asString() != "forward") {
+    if (!edge["direction"].isString() ||
+        (edge["direction"].asString() != "both" && edge["direction"].asString() != "forward")) {
       return fail("invalid_edge", prefix + ".direction must be both or forward");
     }
     const auto direction = edge["direction"].asString();
-    const auto key = direction == "both" ? direction + ":" + std::min(from, to) + ":" + std::max(from, to)
-                                           : direction + ":" + from + ":" + to;
-    if (!edgeKeys.insert(key).second) return fail("duplicate_edge", prefix + " duplicates an existing connection");
+    const auto forwardConnection = from + "\n" + to;
+    const auto reverseConnection = to + "\n" + from;
+    if (directedConnections.count(forwardConnection) != 0 ||
+        (direction == "both" &&
+         directedConnections.count(reverseConnection) != 0)) {
+      return fail("duplicate_edge",
+                  prefix + " overlaps an existing directed connection");
+    }
+    directedConnections.insert(forwardConnection);
+    if (direction == "both") directedConnections.insert(reverseConnection);
     if (edge.isMember("max_speed_mps") && !edge["max_speed_mps"].isNull() &&
         (!finiteNumber(edge["max_speed_mps"]) || edge["max_speed_mps"].asDouble() <= 0 ||
          edge["max_speed_mps"].asDouble() > kMaxSpeedMps)) {

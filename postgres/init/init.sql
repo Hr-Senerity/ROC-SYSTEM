@@ -313,6 +313,13 @@ CREATE TABLE IF NOT EXISTS deployment_events (
   progress INTEGER CHECK (progress IS NULL OR progress BETWEEN 0 AND 100),
   code VARCHAR(64),
   message VARCHAR(512),
+  request_body JSONB,
+  request_digest CHAR(64)
+    CHECK (request_digest IS NULL OR request_digest ~ '^[0-9a-f]{64}$'),
+  attempt INTEGER CHECK (attempt IS NULL OR attempt > 0),
+  lease_token_hash VARCHAR(64)
+    CHECK (lease_token_hash IS NULL OR lease_token_hash ~ '^[0-9a-f]{64}$'),
+  lease_expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (task_id, sequence)
 );

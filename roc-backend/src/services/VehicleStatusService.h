@@ -27,7 +27,7 @@ class VehicleStatusService {
   static VehicleUpdateResult applyTelemetry(
       const std::string &connStr,
       const roc::protocol::RobotStatus &status,
-      std::uint64_t clientSequence,
+      std::int64_t clientSequence,
       int protocolVersion,
       const std::string &libraryVersion,
       const std::string &deviceTokenHash);
@@ -35,7 +35,7 @@ class VehicleStatusService {
   static VehicleUpdateResult applyHeartbeat(
       const std::string &connStr,
       const std::string &vehicleId,
-      std::uint64_t clientSequence,
+      std::int64_t clientSequence,
       int protocolVersion,
       const std::string &libraryVersion,
       const std::string &deviceTokenHash);

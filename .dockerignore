@@ -7,9 +7,12 @@
 plan.md
 docs
 release-output
+deliverables
+tools
 /*.png
 
 **/node_modules
+**/.pnpm-store
 roc-frontend/build
 roc-frontend/dist
 roc-frontend/test-results

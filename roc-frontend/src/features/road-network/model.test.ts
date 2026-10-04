@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { canonicalRoadNetwork, emptyRoadNetwork, validateRoadNetwork } from './model';
 
 describe('road network model', () => {
+  it('enforces sampling precision and coordinate-dependent limits', () => {
+    const network = emptyRoadNetwork('metric');
+    network.sampling.spacing = 0.0000001;
+    expect(validateRoadNetwork(network, 'metric')).toContain('采样间距应在 0.000001 至 100 之间');
+    network.sampling.spacing = 100;
+    expect(validateRoadNetwork(network, 'metric')).toEqual([]);
+    const legacy = emptyRoadNetwork('legacy-normalized');
+    legacy.sampling.spacing = 1.1;
+    expect(validateRoadNetwork(legacy, 'legacy-normalized')).toContain('采样间距应在 0.000001 至 1 之间');
+  });
   it('rejects dangling and self-loop edges', () => {
     const network = emptyRoadNetwork('metric');
     network.nodes.push({ id: 'a', x: 0, y: 0, kind: 'waypoint', label: 'A' });
@@ -19,7 +29,26 @@ describe('road network model', () => {
       { id: 'e1', from: 'a', to: 'b', direction: 'both', max_speed_mps: null, geometry: { type: 'line' } },
       { id: 'e2', from: 'b', to: 'a', direction: 'both', max_speed_mps: null, geometry: { type: 'line' } },
     );
-    expect(validateRoadNetwork(network, 'metric')).toContain('边 e2 与已有连接重复');
+    expect(validateRoadNetwork(network, 'metric')).toContain('边 e2 与已有有向连接重叠');
+  });
+
+  it('rejects overlap with a bidirectional edge but permits opposite forward edges', () => {
+    const network = emptyRoadNetwork('metric');
+    network.nodes.push(
+      { id: 'a', x: 0, y: 0, kind: 'waypoint', label: 'A' },
+      { id: 'b', x: 1, y: 1, kind: 'waypoint', label: 'B' },
+    );
+    network.edges.push(
+      { id: 'e1', from: 'a', to: 'b', direction: 'both', max_speed_mps: null, geometry: { type: 'line' } },
+      { id: 'e2', from: 'a', to: 'b', direction: 'forward', max_speed_mps: null, geometry: { type: 'line' } },
+    );
+    expect(validateRoadNetwork(network, 'metric')).toContain('边 e2 与已有有向连接重叠');
+
+    network.edges = [
+      { id: 'e1', from: 'a', to: 'b', direction: 'forward', max_speed_mps: null, geometry: { type: 'line' } },
+      { id: 'e2', from: 'b', to: 'a', direction: 'forward', max_speed_mps: null, geometry: { type: 'line' } },
+    ];
+    expect(validateRoadNetwork(network, 'metric')).toEqual([]);
   });
 
   it('accepts cubic control points and emits schema v2 editor data', () => {
