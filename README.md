@@ -4,6 +4,8 @@ Robot Operation Control Platform — 机器人运营控制平台
 
 **C++17 / Drogon REST + WebSocket 后端 · React 18 / TypeScript 前端 · PostgreSQL 数据层 · Docker Compose 部署**
 
+当前发布候选为 **`v0.2.1-rc2`**，与独立 Vehicle 通信库采用相同完整版本号。兼容性仍以实际双方提交及五份机器合同 SHA-256 为准；本轮合同实现基线为 `a9c601d`，旧 `v0.2.1-rc1` 标签不包含该合同变更。版本准备不代表 GitHub Release 已发布，详情见 [CHANGELOG](CHANGELOG.rst)。
+
 ## 架构总览
 
 ```mermaid
@@ -612,25 +614,25 @@ UPDATE users SET role = 'super_admin' WHERE username = '<operator>';
 在 Linux x86_64 构建机的已审批 commit/tag 检出上执行；完整版本必须与前端 `package.json` 一致，去掉预发布后缀的基础版本必须与后端 CMake 项目版本一致：
 
 ```bash
-bash scripts/build-release-bundle.sh v0.2.1
+bash scripts/build-release-bundle.sh v0.2.1-rc2
 # 中国大陆构建机可按需使用：
-# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1
+# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1-rc2
 ```
 
 构建脚本会在 Docker builder 中运行后端 CTest、前端 typecheck/生产构建、lint/Vitest 和 Playwright 画布/键盘门禁，然后生成：
 
 ```text
-release-output/roc-system-v0.2.1-amd64.bundle.tar
-release-output/roc-system-v0.2.1-amd64.bundle.tar.sha256
+release-output/roc-system-v0.2.1-rc2-amd64.bundle.tar
+release-output/roc-system-v0.2.1-rc2-amd64.bundle.tar.sha256
 ```
 
 交付包同时包含版本化的 `migrations/` SQL、README/CHANGELOG、`contracts/` OpenAPI/Schema 快照及其 `SHA256SUMS`；精确源码 commit 记录在 `RELEASE-MANIFEST.txt`。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
 
 ```bash
-sha256sum -c roc-system-v0.2.1-amd64.bundle.tar.sha256
-mkdir -p roc-system-v0.2.1
-tar -xf roc-system-v0.2.1-amd64.bundle.tar -C roc-system-v0.2.1
-cd roc-system-v0.2.1
+sha256sum -c roc-system-v0.2.1-rc2-amd64.bundle.tar.sha256
+mkdir -p roc-system-v0.2.1-rc2
+tar -xf roc-system-v0.2.1-rc2-amd64.bundle.tar -C roc-system-v0.2.1-rc2
+cd roc-system-v0.2.1-rc2
 bash deploy.sh --prepare
 # 编辑 release.env，填写 DB_PASSWORD、JWT_SECRET、Origin 和端口
 # 已有数据库先按以下顺序迁移；--install 不自动迁移旧数据。

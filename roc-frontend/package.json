@@ -1,6 +1,6 @@
 {
   "name": "roc-frontend",
-  "version": "0.2.1",
+  "version": "0.2.1-rc2",
   "private": true,
   "packageManager": "pnpm@10.15.1",
   "type": "module",
