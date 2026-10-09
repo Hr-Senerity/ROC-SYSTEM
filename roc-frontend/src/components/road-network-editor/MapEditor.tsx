@@ -2,6 +2,7 @@ import type { PointerEvent, RefObject, WheelEvent } from 'react';
 import type { CoordinateMetadata, Size } from '../../features/maps/coordinates';
 import type { RoadNetwork, RoadNode } from '../../features/road-network/model';
 import { EdgeLayer } from './EdgeLayer';
+import { CurveControlLayer } from './CurveControlLayer';
 import { NodeLayer } from './NodeLayer';
 import type { EditorSelection, EditorTool } from './types';
 
@@ -64,8 +65,9 @@ export function MapEditor(props: MapEditorProps) {
           {mapImageSrc
             ? <image href={mapImageSrc} width={imageSize.width} height={imageSize.height} preserveAspectRatio="none" />
             : <text x={imageSize.width / 2} y={imageSize.height / 2} textAnchor="middle" fill="#64748b" fontSize={16 / scale}>{mapImageError || '正在加载地图…'}</text>}
-          <EdgeLayer network={network} selection={selection} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onEdgePointerDown} onControlPointerDown={onControlPointerDown} />
+          <EdgeLayer network={network} selection={selection} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onEdgePointerDown} />
           <NodeLayer network={network} selection={selection} connectFrom={connectFrom} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onNodePointerDown} />
+          <CurveControlLayer network={network} selection={selection} coordinateMetadata={coordinateMetadata} scale={scale} onPointerDown={onControlPointerDown} />
         </g>
       </svg>
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border bg-white/95 px-3 py-2 text-xs text-slate-600 shadow-sm">

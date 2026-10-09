@@ -211,6 +211,89 @@ test('曲线控制柄、采样参数和 v2 几何会保存到不可变版本', a
   expect(saved.edges[0].geometry.control1?.y).toBe(41.25);
 });
 
+for (const scenario of ['直线转曲线', '曲线工具新建', '控制柄与节点重叠'] as const) {
+  test(`${scenario}：两个控制柄真实拖动、撤销重做和重载`, async ({ page }) => {
+    await page.setViewportSize({ width: 1109, height: 1244 });
+    const fixtures = await installFixtures(page);
+    await openEditor(page);
+
+    if (scenario === '曲线工具新建') {
+      // The editor correctly rejects duplicate edges between the same nodes.
+      await page.getByRole('button', { name: '删除', exact: true }).click();
+      await page.locator('[data-edge-id]').first().locator('path').last().click();
+      await expect(page.locator('[data-edge-id]')).toHaveCount(0);
+      await page.getByRole('button', { name: '曲线', exact: true }).click();
+      await page.locator('[data-node-id]').first().locator('circle').click();
+      await page.locator('[data-node-id]').last().locator('circle').click();
+      await expect(page.locator('[data-edge-id]')).toHaveCount(1);
+      await expect(page.getByRole('button', { name: '曲线', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    } else {
+      await page.locator('[data-edge-id]').first().locator('path').last().click();
+      await page.getByLabel('几何类型').selectOption('cubic_bezier');
+    }
+    const edgeId = await page.getByLabel('边 ID').inputValue();
+    const controls = page.getByLabel('曲线控制柄').locator('circle');
+    await expect(controls).toHaveCount(2);
+
+    if (scenario === '控制柄与节点重叠') {
+      for (const [index, node] of initialNetwork.nodes.entries()) {
+        await page.getByLabel(`控制点 ${index + 1} X`).fill(String(node.x));
+        await page.getByLabel(`控制点 ${index + 1} Y`).fill(String(node.y));
+      }
+      await page.getByLabel('控制点 2 Y').blur();
+    }
+
+    const coordinates = () => Promise.all([1, 2].flatMap((index) =>
+      ['X', 'Y'].map(async (axis) => Number(await page.getByLabel(`控制点 ${index} ${axis}`).inputValue())),
+    ));
+    for (const index of [0, 1]) {
+      // Change scale before the second drag; neither hit testing nor coordinate
+      // conversion may depend on the initial zoom or a forced click.
+      if (index === 1) await page.getByRole('button', { name: '放大', exact: true }).click();
+      const before = await coordinates();
+      const bounds = await controls.nth(index).boundingBox();
+      expect(bounds).not.toBeNull();
+      if (!bounds) throw new Error('控制柄没有可拖动的区域');
+      const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      await page.mouse.move(center.x, center.y);
+      await page.mouse.down();
+      await page.mouse.move(center.x + 24, center.y + (index === 0 ? -36 : 36), { steps: 8 });
+      await page.mouse.up();
+      await expect.poll(async () => Number(await page.getByLabel(`控制点 ${index + 1} X`).inputValue())).toBeGreaterThan(before[index * 2]);
+      const after = await coordinates();
+      expect(after[index * 2 + 1]).not.toBeCloseTo(before[index * 2 + 1]);
+      const other = index === 0 ? 1 : 0;
+      expect(after.slice(other * 2, other * 2 + 2)).toEqual(before.slice(other * 2, other * 2 + 2));
+
+      await page.getByRole('button', { name: '撤销', exact: true }).click();
+      await expect.poll(coordinates).toEqual(before);
+      await page.getByRole('button', { name: '重做', exact: true }).click();
+      await expect.poll(coordinates).toEqual(after);
+    }
+
+    const finalCoordinates = await coordinates();
+    await page.getByRole('button', { name: '保存新版本' }).click();
+    await expect(page.getByText('已保存为不可变版本 v2。')).toBeVisible();
+    expect(fixtures.getSavedNetwork()?.nodes).toEqual(initialNetwork.nodes);
+    await page.reload();
+    // A curved path's bounding-box center need not lie on its stroke. Click
+    // an actual point on the reloaded curve rather than forcing a DOM event.
+    const midpoint = await page.locator(`[data-edge-id="${edgeId}"]`).locator('path').last().evaluate((element) => {
+      const path = element as SVGPathElement;
+      const point = path.getPointAtLength(path.getTotalLength() / 2);
+      const matrix = path.getScreenCTM();
+      if (!matrix) throw new Error('路网曲线没有屏幕坐标变换');
+      const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+      return { x: screen.x, y: screen.y };
+    });
+    await page.mouse.click(midpoint.x, midpoint.y);
+    const reloadedCoordinates = await coordinates();
+    for (const [index, value] of finalCoordinates.entries()) {
+      expect(reloadedCoordinates[index]).toBeCloseTo(value, 5);
+    }
+  });
+}
+
 test('键盘操作覆盖工具切换、输入保护、删除、撤销重做与对话框焦点恢复', async ({ page }) => {
   await installFixtures(page);
   await openEditor(page);
