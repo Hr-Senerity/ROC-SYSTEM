@@ -4,7 +4,7 @@ Robot Operation Control Platform — 机器人运营控制平台
 
 **C++17 / Drogon REST + WebSocket 后端 · React 18 / TypeScript 前端 · PostgreSQL 数据层 · Docker Compose 部署**
 
-当前发布候选为 **`v0.2.1-rc2`**，与独立 Vehicle 通信库采用相同完整版本号。兼容性仍以实际双方提交及五份机器合同 SHA-256 为准；本轮合同实现基线为 `a9c601d`，旧 `v0.2.1-rc1` 标签不包含该合同变更。版本准备不代表 GitHub Release 已发布，详情见 [CHANGELOG](CHANGELOG.rst)。
+当前发布候选为 **`v0.2.1-rc3`**，包含曲线控制柄拖动修复；独立 Vehicle 通信库的配对目标同为 `v0.2.1-rc3`，各自发布提交与验证结果单独记录。兼容性仍以双方实际提交及五份机器合同 SHA-256 为准；合同实现基线保持 `a9c601d`，Device Protocol v1、map package v2 和 road-network v1/v2 不变。软件发布不等于服务器已升级或通过生产验收，详情见 [CHANGELOG](CHANGELOG.rst)。
 
 ## 架构总览
 
@@ -598,7 +598,7 @@ bash scripts/verify-deployment.sh
 
 数据库迁移 `009_registration_invites.sql` 完成后，已有 `super_admin` 可在“平台账户 → 注册邀请码”生成一次性邀请码。全新空数据库仍不会创建固定管理员、口令或固定邀请码；数据库运维人员应临时插入一个自选的 5 位大写字母数字 bootstrap 邀请码（必须同时包含数字和字母），完成首个账户注册后把该账户提升为 `super_admin`。后续邀请码全部由后台生成，不要在仓库或部署脚本中保存 bootstrap 邀请码或初始管理员密码。
 
-`v0.2.1-rc1` 已于 2026-09-24 完成主服务器人工验收：有效邀请码首次注册成功，同一邀请码重复使用被拒绝，已撤销邀请码被拒绝，验收临时账户随后已清理。该结果验证串行业务行为；两个并发注册请求争用同一码时最多一个成功，仍必须由数据库/API 集成测试单独覆盖。
+邀请码串行验收已通过：有效邀请码首次注册成功，同码重复使用和已撤销邀请码均被拒绝，验收临时账户已清理。维护者随后于 2026-09-26 确认并发争用人工验收通过，同一码最多成功注册一次；人工结果不冒充新的自动化压力测试。
 
 ```sql
 -- 仅限全新空数据库首次引导；把占位符替换为临时随机码，不要提交该值。
@@ -614,25 +614,25 @@ UPDATE users SET role = 'super_admin' WHERE username = '<operator>';
 在 Linux x86_64 构建机的已审批 commit/tag 检出上执行；完整版本必须与前端 `package.json` 一致，去掉预发布后缀的基础版本必须与后端 CMake 项目版本一致：
 
 ```bash
-bash scripts/build-release-bundle.sh v0.2.1-rc2
+bash scripts/build-release-bundle.sh v0.2.1-rc3
 # 中国大陆构建机可按需使用：
-# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1-rc2
+# APT_MIRROR=tsinghua NPM_MIRROR=npmmirror bash scripts/build-release-bundle.sh v0.2.1-rc3
 ```
 
 构建脚本会在 Docker builder 中运行后端 CTest、前端 typecheck/生产构建、lint/Vitest 和 Playwright 画布/键盘门禁，然后生成：
 
 ```text
-release-output/roc-system-v0.2.1-rc2-amd64.bundle.tar
-release-output/roc-system-v0.2.1-rc2-amd64.bundle.tar.sha256
+release-output/roc-system-v0.2.1-rc3-amd64.bundle.tar
+release-output/roc-system-v0.2.1-rc3-amd64.bundle.tar.sha256
 ```
 
 交付包同时包含版本化的 `migrations/` SQL、README/CHANGELOG、`contracts/` OpenAPI/Schema 快照及其 `SHA256SUMS`；精确源码 commit 记录在 `RELEASE-MANIFEST.txt`。将两个文件传到运行主机；传输方式可使用 SSH/SCP、内网对象存储或人工上传。运行主机只需要 Docker、Docker Compose v2、`tar`、`gzip` 和 `sha256sum`：
 
 ```bash
-sha256sum -c roc-system-v0.2.1-rc2-amd64.bundle.tar.sha256
-mkdir -p roc-system-v0.2.1-rc2
-tar -xf roc-system-v0.2.1-rc2-amd64.bundle.tar -C roc-system-v0.2.1-rc2
-cd roc-system-v0.2.1-rc2
+sha256sum -c roc-system-v0.2.1-rc3-amd64.bundle.tar.sha256
+mkdir -p roc-system-v0.2.1-rc3
+tar -xf roc-system-v0.2.1-rc3-amd64.bundle.tar -C roc-system-v0.2.1-rc3
+cd roc-system-v0.2.1-rc3
 bash deploy.sh --prepare
 # 编辑 release.env，填写 DB_PASSWORD、JWT_SECRET、Origin 和端口
 # 已有数据库先按以下顺序迁移；--install 不自动迁移旧数据。
